@@ -1,0 +1,19 @@
+# Nixpacks configuration for Dokploy deployment
+
+[providers]
+providers = ["node"]
+
+[phases.setup]
+nixPkgs = ["nodejs_20", "pnpm", "openssl"]
+
+[phases.install]
+cmds = ["pnpm install"]
+
+[phases.build]
+cmds = [
+  "npx prisma generate",
+  "pnpm run build"
+]
+
+[start]
+cmd = "npx prisma db push && pnpm start"
