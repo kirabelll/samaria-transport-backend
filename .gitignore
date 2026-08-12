@@ -46,3 +46,6 @@ coverage/
 *.sqlite
 *.sqlite-journal
 *.db
+
+pnpm-workspace.yaml
+
