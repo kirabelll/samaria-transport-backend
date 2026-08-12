@@ -5,7 +5,8 @@ providers = ["node"]
 nixPkgs = ["nodejs_20", "pnpm", "openssl"]
 
 [phases.install]
-cmds = ["pnpm install"]
+cmds = ["pnpm install --no-frozen-lockfile"]
+
 
 [phases.build]
 cmds = [
