@@ -1,0 +1,1892 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── ENUMS (SQLite uses String) ───────────────────────────────────────────────
+// VehicleCategory, VehicleStatus, EmployeeRole, TripStatus, etc. stored as String
+
+// ─── USERS & AUTH ─────────────────────────────────────────────────────────────
+model User {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  password      String
+  name          String
+  role          String    // owner, dispatcher, driver, technical_manager, store_manager, cashier, hr, customer, admin
+  employeeId    String?   @unique
+  customerId    String?   @unique
+  telegramChatId String?
+  permissions   String?   // JSON array of allowed page keys (null = use role defaults)
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  employee      Employee? @relation(fields: [employeeId], references: [id])
+  customer      Customer? @relation(fields: [customerId], references: [id])
+
+  cashierRecord Cashier?
+  notifications Notification[]
+  approvedAdvances DriverAdvance[] @relation("AdvanceApprover")
+  createdTrips  Trip[]     @relation("TripCreator")
+  approvedPayrolls Payroll[] @relation("PayrollApprover")
+  approvedWorkOrders WorkOrder[] @relation("WorkOrderApprover")
+  createdWorkOrders WorkOrder[] @relation("WorkOrderCreator")
+  requestedPurchaseReqs PurchaseRequest[] @relation("PurchaseRequester")
+  approvedPurchaseReqs PurchaseRequest[] @relation("PurchaseApprover")
+  requestedSparePartReqs SparePartRequest[] @relation("SparePartRequester")
+  approvedSparePartReqs SparePartRequest[] @relation("SparePartApprover")
+  auditLogs     AuditLog[]
+}
+
+// ─── EMPLOYEES ────────────────────────────────────────────────────────────────
+model Employee {
+  id              String    @id @default(uuid())
+  empNumber       String    @unique
+  firstName       String
+  lastName        String
+  role            String    // driver, helper, technical, store, cashier, hr, office, management
+  department      String
+  basicSalary     Float
+  perDiemRate     Float     @default(0)
+  hireDate        DateTime
+  contractType    String    // permanent, contract, daily
+  phone           String
+  email           String?
+  nationalId      String?
+  address         String?
+  status          String    @default("active") // active, inactive, suspended
+  bankAccount     String?
+  emergencyContact String?
+  photo           String?
+  // When this Employee record is an auto-imported mirror of a rental vehicle's driver
+  sourceRentalVehicleId String? @unique
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  user            User?
+  vehicle         Vehicle?  @relation("AssignedDriver")
+  driverTrips     Trip[]    @relation("TripDriver")
+  helperTrips     Trip[]    @relation("TripHelper")
+  advances        DriverAdvance[]
+  attendances     Attendance[]
+  payrolls        Payroll[]
+  workOrdersAssigned WorkOrder[] @relation("WorkOrderTechnician")
+  breakdownReports BreakdownReport[] @relation("BreakdownReporter")
+  approvedBreakdowns BreakdownReport[] @relation("BreakdownApprover")
+  handoversFrom       VehicleHandover[] @relation("HandoverFromDriver")
+  handoversTo         VehicleHandover[] @relation("HandoverToDriver")
+  handoversSupervised VehicleHandover[] @relation("HandoverSupervisor")
+  driverLedger        DriverLedgerEntry[]
+  driverScores        DriverScore[]
+  driverRewardPenalties DriverRewardPenalty[]
+  fuelLogs            FuelLog[]  @relation("DriverFuelLogs")
+  driverAssignments   DriverAssignment[]
+  // License/medical tracking
+  licenseNumber       String?
+  licenseExpiry       DateTime?
+  medicalCertExpiry   DateTime?
+  trainingValidUntil  DateTime?
+}
+
+// ─── VEHICLES ─────────────────────────────────────────────────────────────────
+model Vehicle {
+  id                String    @id @default(uuid())
+  plateNumber       String    @unique
+  category          String    // cement_tanker, gravel_tipper, office_car, office_pickup, motorbike, minibus
+  vehicleType       String    @default("standalone") // standalone, power_unit, trailer
+  categoryId        String?   // link to dynamic VehicleCategory
+  make              String
+  model             String
+  year              Int
+  capacityTons      Float     @default(0)
+  purchaseCost      Float     @default(0)
+  usefulLifeYears   Float     @default(5)
+  residualValue     Float     @default(0)
+  depreciationMethod String   @default("straight_line") // straight_line, declining_balance
+  currentKm         Float     @default(0)
+  status            String    @default("active") // active, maintenance, breakdown, inactive
+  operationalStatus String    @default("idle") // idle, on_trip, loading, maintenance, external, locked
+  assignedDriverId  String?   @unique
+  insuranceExpiry   DateTime?
+  inspectionExpiry  DateTime?
+  permitExpiry      DateTime?
+  libreExpiry       DateTime?
+  boloExpiry        DateTime?
+  roadFundExpiry    DateTime?
+  roadworthinessExpiry DateTime?
+  color             String?
+  engineNumber      String?
+  chassisNumber     String?
+  gpsImei           String?   @unique
+  fuelType          String?
+  fuelTankCapacity  Float?
+  photo             String?
+  photos            String?   // JSON array of photo paths
+  lastKnownLocation String?
+  lastLocationAt    DateTime?
+  complianceLocked  Boolean   @default(false)
+  lockReason        String?
+  lockedAt          DateTime?
+  ownership         String    @default("company") // company, rented, leased
+  ownerName         String?
+  sourceRentalVehicleId String? @unique // link to RentalVehicle when auto-imported
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  assignedDriver    Employee? @relation("AssignedDriver", fields: [assignedDriverId], references: [id])
+  vehicleCategory   VehicleCategory? @relation(fields: [categoryId], references: [id])
+  trips             Trip[]
+  maintenanceSchedules MaintenanceSchedule[]
+  workOrders        WorkOrder[]
+  breakdownReports  BreakdownReport[]
+  fuelLogs          FuelLog[]
+  inventoryIssues   InventoryTransaction[] @relation("VehicleParts")
+  depreciation      AssetDepreciation?
+  KmLogs            KmLog[]
+  handovers         VehicleHandover[]
+  driverAssignments DriverAssignment[]
+  pairingsAsFront   VehiclePairing[] @relation("PairingFront")
+  pairingsAsBack    VehiclePairing[] @relation("PairingBack")
+  tyreAssets        TyreAsset[]
+  fuelStandards     FuelStandard[]
+  accidentRecords   AccidentRecord[]
+  revenueShareTrips RevenueShareTrip[]
+}
+
+// ─── DYNAMIC VEHICLE CATEGORIES ──────────────────────────────────────────────
+model VehicleCategory {
+  id          String    @id @default(uuid())
+  name        String    @unique  // e.g. cement_tanker, gravel_tipper, flatbed
+  label       String             // Display name e.g. "Cement Tanker"
+  description String?
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+
+  vehicles    Vehicle[]
+}
+
+// ─── DRIVER-TO-PLATE ASSIGNMENT HISTORY ──────────────────────────────────────
+model DriverAssignment {
+  id              String    @id @default(uuid())
+  driverId        String
+  vehicleId       String
+  effectiveDate   DateTime  @default(now())
+  endDate         DateTime?
+  previousPlate   String?
+  reason          String?
+  status          String    @default("active") // active, ended, pending_approval
+  assignedBy      String?
+  approvedBy      String?
+  approvedAt      DateTime?
+  createdAt       DateTime  @default(now())
+
+  driver          Employee  @relation(fields: [driverId], references: [id])
+  vehicle         Vehicle   @relation(fields: [vehicleId], references: [id])
+}
+
+// ─── FRONT/BACK TRUCK PAIRING ────────────────────────────────────────────────
+model VehiclePairing {
+  id              String    @id @default(uuid())
+  frontVehicleId  String    // power unit / tractor
+  backVehicleId   String    // trailer / tanker / cocot
+  pairedDate      DateTime  @default(now())
+  unpairedDate    DateTime?
+  status          String    @default("active") // active, ended
+  notes           String?
+  pairedBy        String?
+  createdAt       DateTime  @default(now())
+
+  frontVehicle    Vehicle   @relation("PairingFront", fields: [frontVehicleId], references: [id])
+  backVehicle     Vehicle   @relation("PairingBack", fields: [backVehicleId], references: [id])
+}
+
+// ─── CUSTOMERS ────────────────────────────────────────────────────────────────
+model Customer {
+  id              String    @id @default(uuid())
+  companyName     String
+  contactName     String
+  phone           String
+  email           String?
+  address         String?
+  paymentType     String    @default("cash") // cash, credit, monthly
+  creditLimit     Float     @default(0)
+  creditDays      Int       @default(30)
+  taxNumber       String?   // TIN
+  vatRegistered   Boolean   @default(false)
+  outstandingBalance Float  @default(0)
+  overdueAmount   Float     @default(0)
+  dispatchBlocked Boolean   @default(false)
+  blockReason     String?
+  status          String    @default("active")
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  user            User?
+  orders          CustomerOrder[]
+  trips           Trip[]
+  contracts       RateContract[]
+  invoices        Invoice[]
+}
+
+// ─── RATE CONTRACTS ───────────────────────────────────────────────────────────
+model RateContract {
+  id              String    @id @default(uuid())
+  customerId      String
+  orderType       String    // cement, gravel
+  ratePerTon      Float
+  ratePerTrip     Float?
+  minTons         Float?
+  fromLocation    String?
+  toLocation      String?
+  startDate       DateTime
+  endDate         DateTime?
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+
+  customer        Customer  @relation(fields: [customerId], references: [id])
+}
+
+// ─── CUSTOMER ORDERS ──────────────────────────────────────────────────────────
+model CustomerOrder {
+  id                String    @id @default(uuid())
+  orderNumber       String    @unique
+  customerId        String
+  orderDate         DateTime  @default(now())
+  requiredDeliveryDate DateTime?
+  orderType         String    // cement, gravel
+  quantity          Float
+  materialType      String?
+  pickupLocation    String
+  pickupContact     String?
+  pickupPhone       String?
+  deliveryLocation  String
+  deliveryContact   String?
+  deliveryPhone     String?
+  deliveryGps       String?
+  deliveryAddress   String?
+  unloadingInstructions String?
+  contractRef       String?
+  poNumber          String?
+  paymentType       String    @default("cash")
+  ratePerTon        Float?
+  totalAmount       Float?
+  status            String    @default("submitted") // submitted, approved, scheduled, dispatched, in_transit, delivered, invoiced, paid, rejected
+  rejectionReason   String?
+  notes             String?
+  attachments       String?   // JSON array of file paths
+  // Phase 1: Order Control fields
+  route             String?   // normalized route e.g. "Mugher -> Addis Ababa"
+  deliverySite      String?   // specific delivery site name
+  itemProduct       String?   // e.g. "OPC 42.5", "PPC", "Crushed Aggregate 20mm"
+  totalDelivered    Float     @default(0)   // running sum of delivered tons
+  totalTrips        Int       @default(0)   // count of linked trips
+  remainingQty      Float?    // quantity - totalDelivered
+  baseRate          Float?    // original rate at order creation
+  adjustedRate      Float?    // rate after revision (if any)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  customer          Customer  @relation(fields: [customerId], references: [id])
+  trips             Trip[]
+  invoice           Invoice?
+  messages          OrderMessage[]
+  statusHistory     OrderStatusHistory[]
+  revisions         OrderRevision[]
+  penalties         OrderPenalty[]
+  settlements       Settlement[]
+}
+
+model OrderMessage {
+  id          String   @id @default(uuid())
+  orderId     String
+  fromRole    String   // office, customer
+  message     String
+  createdAt   DateTime @default(now())
+
+  order       CustomerOrder @relation(fields: [orderId], references: [id])
+}
+
+model OrderStatusHistory {
+  id        String   @id @default(uuid())
+  orderId   String
+  status    String
+  note      String?
+  changedAt DateTime @default(now())
+
+  order     CustomerOrder @relation(fields: [orderId], references: [id])
+}
+
+// ─── TRIPS ────────────────────────────────────────────────────────────────────
+model Trip {
+  id                  String    @id @default(uuid())
+  tripNumber          String    @unique
+  orderId             String?
+  vehicleId           String
+  driverId            String
+  helperId            String?
+  customerId          String?
+  tripDate            DateTime  @default(now())
+  orderType           String    // cement, gravel
+  pickupLocation      String
+  deliveryLocation    String
+  plannedQuantityTons Float
+  loadedQuantityTons  Float?
+  deliveredQuantityTons Float?
+  shortage            Float?    @default(0)
+  ratePerTon          Float
+  revenue             Float?
+  shortageDeduction   Float?    @default(0)
+  driverAdvanceGiven  Float?    @default(0)
+  fuelCost            Float?    @default(0)
+  status              String    @default("planned") // planned, dispatched, loading, in_transit, delivering, completed, cancelled
+  weighbridgeSlip     String?
+  podDocument         String?
+  podSignature        String?
+  loadingStartTime    DateTime?
+  loadingEndTime      DateTime?
+  departureTime       DateTime?
+  arrivalAtDelivery   DateTime?
+  unloadingStartTime  DateTime?
+  unloadingEndTime    DateTime?
+  totalCycleMinutes   Int?
+  gpsTrackingData     String?
+  notes               String?
+  // Phase 1: POD & delivery confirmation
+  podUrl              String?   // uploaded POD file path
+  podUploadedAt       DateTime?
+  podUploadedBy       String?
+  deliveryConfirmedAt DateTime?
+  deliveryConfirmedBy String?
+  customerConfirmationStatus String @default("pending") // pending, confirmed, disputed
+  customerDisputeReason String?
+  dispatchedAt        DateTime?
+  dispatchedBy        String?
+  loadedAt            DateTime?
+  // GPS-based auto-capture fields (Part B4)
+  gpsArrivalAtLoading       String?   // lat,lng
+  gpsArrivalAtLoadingTime   DateTime?
+  gpsLoadingCompletionTime  DateTime? // fallback if driver doesn't fill
+  gpsArrivalAtUnloading     String?   // lat,lng
+  gpsArrivalAtUnloadingTime DateTime?
+  gpsUnloadingExitTime      DateTime?
+  unloadingDurationMinutes  Int?
+  // Shortage & customer deduction (Part B6)
+  customerDeducted          Boolean   @default(false)
+  customerDeductionAmount   Float     @default(0)
+  driverPenaltyAmount       Float     @default(0)
+  // Trip document attachments (Part A6)
+  tripAttachments           String?   // JSON array of file paths
+  // Trip cost allocation (#11)
+  allocatedFuelCost         Float?  @default(0)
+  allocatedMaintenanceCost  Float?  @default(0)
+  allocatedDepreciationCost Float?  @default(0)
+  allocatedDriverCost       Float?  @default(0)
+  totalTripCost             Float?  @default(0)
+  profitPerTrip             Float?  @default(0)
+  createdById         String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  order               CustomerOrder? @relation(fields: [orderId], references: [id])
+  vehicle             Vehicle   @relation(fields: [vehicleId], references: [id])
+  driver              Employee  @relation("TripDriver", fields: [driverId], references: [id])
+  helper              Employee? @relation("TripHelper", fields: [helperId], references: [id])
+  customer            Customer? @relation(fields: [customerId], references: [id])
+  createdBy           User?     @relation("TripCreator", fields: [createdById], references: [id])
+  advances            DriverAdvance[]
+  fuelLogs            FuelLog[]
+  sparePartRequests   SparePartRequest[]
+  statusHistory       TripStatusHistory[]
+  penalties           OrderPenalty[]
+  vehicleSwapLogs     VehicleSwapLog[]
+}
+
+// ─── TRIP STATUS HISTORY ─────────────────────────────────────────────────────
+model TripStatusHistory {
+  id          String   @id @default(uuid())
+  tripId      String
+  fromStatus  String
+  toStatus    String
+  changedBy   String?
+  note        String?
+  changedAt   DateTime @default(now())
+
+  trip        Trip     @relation(fields: [tripId], references: [id])
+}
+
+// ─── BREAKDOWNS ───────────────────────────────────────────────────────────────
+model BreakdownReport {
+  id              String    @id @default(uuid())
+  vehicleId       String
+  reportedById    String
+  reportedAt      DateTime  @default(now())
+  location        String
+  description     String
+  photos          String?   // JSON array of photo paths
+  videoUrl        String?
+  status          String    @default("pending") // pending, approved, rejected, resolved
+  approvedById    String?
+  approvedAt      DateTime?
+  rejectionReason String?
+  createdAt       DateTime  @default(now())
+
+  vehicle         Vehicle   @relation(fields: [vehicleId], references: [id])
+  reportedBy      Employee  @relation("BreakdownReporter", fields: [reportedById], references: [id])
+  approvedBy      Employee? @relation("BreakdownApprover", fields: [approvedById], references: [id])
+  workOrder       WorkOrder?
+}
+
+// ─── WORK ORDERS (Maintenance) ────────────────────────────────────────────────
+model WorkOrder {
+  id                  String    @id @default(uuid())
+  workOrderNumber     String    @unique
+  vehicleId           String
+  type                String    // preventive, corrective, inspection
+  breakdownReportId   String?   @unique
+  garageId            String?
+  garageType          String    @default("internal") // internal, outsourced
+  technicianId        String?
+  status              String    @default("open") // open, in_progress, completed, cancelled
+  description         String
+  priority            String    @default("normal") // low, normal, high, urgent
+  startTime           DateTime?
+  endTime             DateTime?
+  totalDowntimeHours  Float?
+  laborCost           Float?    @default(0)
+  partsCost           Float?    @default(0)
+  totalCost           Float?    @default(0)
+  garageInvoice       String?
+  driverSignature     String?
+  driverHandoverAt    DateTime?
+  approvedById        String?
+  approvedAt          DateTime?
+  createdById         String?
+  notes               String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  vehicle             Vehicle   @relation(fields: [vehicleId], references: [id])
+  breakdownReport     BreakdownReport? @relation(fields: [breakdownReportId], references: [id])
+  garage              Garage?   @relation(fields: [garageId], references: [id])
+  technician          Employee? @relation("WorkOrderTechnician", fields: [technicianId], references: [id])
+  approvedBy          User?     @relation("WorkOrderApprover", fields: [approvedById], references: [id])
+  createdBy           User?     @relation("WorkOrderCreator", fields: [createdById], references: [id])
+  sparePartRequests   SparePartRequest[]
+}
+
+model Garage {
+  id              String    @id @default(uuid())
+  name            String
+  address         String?
+  phone           String?
+  contactPerson   String?
+  speciality      String?
+  isInternal      Boolean   @default(false)
+  rating          Float?
+  status          String    @default("active") // active, inactive
+  totalJobsDone   Int       @default(0)
+  avgCompletionDays Float?
+  totalSpent      Float     @default(0)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  workOrders  WorkOrder[]
+}
+
+// ─── MAINTENANCE SCHEDULES ────────────────────────────────────────────────────
+model MaintenanceSchedule {
+  id              String    @id @default(uuid())
+  vehicleId       String
+  maintenanceType String    // oil_change, gearbox_oil, hydraulic, tire_rotation, brake_inspection, compressor, annual_inspection, insurance, permit, wash_cleaning, engine_service, differential, filter, class_a, class_b, class_c, class_d
+  maintenanceClass String?  // A, B, C, D
+  intervalKm      Float?
+  intervalDays    Int?
+  lastDoneKm      Float?
+  lastDoneDate    DateTime?
+  nextDueKm       Float?
+  nextDueDate     DateTime?
+  alertBeforeKm   Float?    // alert N km before due
+  alertBeforeDays Int?      // alert N days before due
+  status          String    @default("upcoming") // upcoming, due_soon, overdue, completed
+  linkedWorkOrderId String?
+  notes           String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  vehicle         Vehicle   @relation(fields: [vehicleId], references: [id])
+}
+
+// ─── MAINTENANCE CLASS TEMPLATES ─────────────────────────────────────────────
+model MaintenanceClassTemplate {
+  id              String    @id @default(uuid())
+  className       String    // A, B, C, D
+  label           String    // "Class A - Basic Inspection", etc.
+  defaultIntervalKm Float?
+  defaultIntervalDays Int?
+  description     String?
+  checklistItems  String?   // JSON array of checklist items
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+// ─── SPARE PARTS REQUESTS ─────────────────────────────────────────────────────
+model SparePartRequest {
+  id              String    @id @default(uuid())
+  workOrderId     String?
+  tripId          String?
+  inventoryId     String?
+  partName        String
+  partNumber      String?
+  quantityNeeded  Float
+  quantityIssued  Float?
+  unitCost        Float?
+  totalCost       Float?
+  status          String    @default("pending") // pending, approved, issued, cancelled
+  requestedById   String?
+  approvedById    String?
+  approvedAt      DateTime?
+  issuedAt        DateTime?
+  notes           String?
+  createdAt       DateTime  @default(now())
+
+  workOrder       WorkOrder? @relation(fields: [workOrderId], references: [id])
+  trip            Trip?      @relation(fields: [tripId], references: [id])
+  inventory       Inventory? @relation(fields: [inventoryId], references: [id])
+  requestedBy     User?      @relation("SparePartRequester", fields: [requestedById], references: [id])
+  approvedBy      User?      @relation("SparePartApprover", fields: [approvedById], references: [id])
+}
+
+// ─── INVENTORY / STORE ────────────────────────────────────────────────────────
+model Inventory {
+  id              String    @id @default(uuid())
+  itemCode        String?   @unique
+  partName        String
+  partNumber      String?   @unique
+  category        String    // spare_part, tire, lubricant, consumable, fuel, tool
+  unit            String    @default("pcs")
+  quantityInStock Float     @default(0)
+  minimumStock    Float     @default(0)
+  maximumStock    Float?
+  reorderPoint    Float?
+  unitCost        Float     @default(0)
+  totalValue      Float     @default(0)
+  costingMethod   String    @default("moving_average") // moving_average, fifo, lifo
+  location        String?   // main_warehouse, addis_warehouse, workshop, mobile
+  supplier        String?
+  supplierId      String?
+  lastPurchaseDate DateTime?
+  lastPurchasePrice Float?   // last unit price paid — used for price-variance reporting
+  lastReceiptNumber String?
+  reportGroup     String?   // manual classification: heavy_vehicle_tires, mechanical_spares, consumables, office_materials, project_specific
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  transactions    InventoryTransaction[]
+  purchaseRequestLines PurchaseRequestLine[]
+  sparePartRequests SparePartRequest[]
+}
+
+model InventoryTransaction {
+  id              String    @id @default(uuid())
+  inventoryId     String
+  vehicleId       String?
+  type            String    // in, out, adjustment, return
+  quantity        Float
+  unitCost        Float
+  totalCost       Float
+  balanceAfter    Float?
+  workOrderId     String?
+  purchaseOrderId String?
+  reference       String?
+  issuedToDriver  String?   // driver name or ID
+  issuedToDept    String?   // department
+  issueReason     String?
+  approvedBy      String?
+  location        String?   // stock location
+  supplierId      String?
+  supplierName    String?
+  receiptNumber   String?
+  notes           String?
+  createdAt       DateTime  @default(now())
+
+  inventory       Inventory @relation(fields: [inventoryId], references: [id])
+  vehicle         Vehicle?  @relation("VehicleParts", fields: [vehicleId], references: [id])
+}
+
+// ─── PROCUREMENT ──────────────────────────────────────────────────────────────
+model Supplier {
+  id              String    @id @default(uuid())
+  name            String
+  contactName     String?
+  phone           String?
+  email           String?
+  address         String?
+  taxNumber       String?   // TIN
+  vatRegistered   Boolean   @default(false)
+  withholdingTaxRate Float  @default(0)
+  suppliedCategory String?  // spare_parts, fuel, tyres, lubricants, general, services
+  rating          Float?    // 1-5 performance rating (auto-derived)
+  avgLeadTimeDays Float?    // PR creation → GRN avg, computed
+  qualityPassRate Float?    // % of GRNs with inspectionResult=passed, computed
+  totalSpend      Float     @default(0) // running total of all PO amounts
+  creditLimit     Float?
+  creditTermsDays Int?
+  currentBalance  Float     @default(0)
+  status          String    @default("active") // active, inactive
+  notes           String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  quotations     Quotation[]
+  purchaseOrders PurchaseOrder[]
+  fuelStandards  FuelStandard[] @relation("FuelSupplier")
+}
+
+model PurchaseRequest {
+  id              String    @id @default(uuid())
+  requestNumber   String    @unique
+  requestedById   String?
+  approvedById    String?
+  department      String?   // fleet, workshop, store, office, admin
+  category        String?   // spare_parts, fuel, tyres, tools, office_supplies, services
+  requiredDate    DateTime?
+  isEmergency     Boolean   @default(false)
+  emergencyReason String?
+  attachment      String?
+  status          String    @default("pending") // pending, approved, rejected, ordered, received
+  urgency         String    @default("normal") // low, normal, high, urgent
+  notes           String?
+  approvedAt      DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  requestedBy     User?     @relation("PurchaseRequester", fields: [requestedById], references: [id])
+  approvedBy      User?     @relation("PurchaseApprover", fields: [approvedById], references: [id])
+  lines           PurchaseRequestLine[]
+  quotations      Quotation[]
+  purchaseOrder   PurchaseOrder?
+}
+
+model PurchaseRequestLine {
+  id              String    @id @default(uuid())
+  purchaseRequestId String
+  inventoryId     String?
+  itemName        String
+  partNumber      String?
+  quantityNeeded  Float
+  estimatedCost   Float?
+  notes           String?
+
+  purchaseRequest PurchaseRequest @relation(fields: [purchaseRequestId], references: [id])
+  inventory       Inventory?      @relation(fields: [inventoryId], references: [id])
+}
+
+model Quotation {
+  id                  String    @id @default(uuid())
+  purchaseRequestId   String
+  supplierId          String
+  quotationNumber     String?
+  unitPrice           Float
+  totalPrice          Float
+  deliveryDays        Int?
+  validityDays        Int?
+  paymentTerms        String?
+  notes               String?
+  document            String?
+  status              String    @default("pending") // pending, selected, rejected
+  createdAt           DateTime  @default(now())
+
+  purchaseRequest     PurchaseRequest @relation(fields: [purchaseRequestId], references: [id])
+  supplier            Supplier  @relation(fields: [supplierId], references: [id])
+}
+
+model PurchaseOrder {
+  id                  String    @id @default(uuid())
+  poNumber            String    @unique
+  purchaseRequestId   String    @unique
+  supplierId          String
+  quantity            Float
+  unitPrice           Float
+  vatRate             Float     @default(0)
+  vatAmount           Float     @default(0)
+  totalAmount         Float
+  paymentMode         String    @default("cash") // cash, credit, bank_transfer
+  deliveryLocation    String?
+  status              String    @default("pending") // pending, sent, shipped, partial, received, cancelled
+  expectedDelivery    DateTime?
+  promisedLeadDays    Int?      // copied from selected Quotation at PO creation
+  shippedAt           DateTime? // when supplier confirmed dispatch (Mark as Shipped)
+  shippedById         String?   // who clicked Mark as Shipped
+  receivedAt          DateTime? // last GRN date (auto-set)
+  receivedQuantity    Float?    // sum across all GRNs (auto-derived)
+  damagedQuantity     Float?    // sum across all GRNs
+  receivedBy          String?   // last receiver (auto-set)
+  invoiceNumber       String?
+  invoiceDocument     String?
+  notes               String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  purchaseRequest     PurchaseRequest @relation(fields: [purchaseRequestId], references: [id])
+  supplier            Supplier  @relation(fields: [supplierId], references: [id])
+  goodsReceipts       GoodsReceiptNote[]
+}
+
+// ─── GOODS RECEIPT NOTE (GRN) ─────────────────────────────────────────────
+model GoodsReceiptNote {
+  id                  String    @id @default(uuid())
+  grnNumber           String    @unique // GRN-YYYY-NNNNNN
+  purchaseOrderId     String
+  receivedDate        DateTime  @default(now())
+  receivedById        String    // single-step: receiver = inspector
+  quantityReceived    Float
+  quantityDamaged     Float     @default(0)
+  quantityRejected    Float     @default(0) // failed inspection
+  inspectionResult    String    @default("passed") // passed, conditional, failed
+  defectsNotes        String?
+  supplierInvoiceNumber String?
+  attachmentUrl       String?
+  notes               String?
+  createdAt           DateTime  @default(now())
+
+  purchaseOrder       PurchaseOrder @relation(fields: [purchaseOrderId], references: [id])
+
+  @@index([purchaseOrderId])
+  @@index([receivedDate])
+}
+
+// ─── PROCUREMENT REPORT NOTE (Manager's Comment) ──────────────────────────
+model ProcurementReportNote {
+  id                  String    @id @default(uuid())
+  period              String    // weekly, monthly, quarterly, custom
+  fromDate            DateTime
+  toDate              DateTime
+  keyAchievement      String?   // free-text Manager's headline
+  marketAnalysisNote  String?
+  strategicSourcingNote String?
+  generalNotes        String?
+  authorId            String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@unique([period, fromDate, toDate])
+  @@index([fromDate, toDate])
+}
+
+// ─── RENTAL TRUCKS ────────────────────────────────────────────────────────────
+model RentalOwner {
+  id              String    @id @default(uuid())
+  name            String
+  phone           String
+  email           String?
+  bankAccount     String?
+  paymentTerms    String    @default("cash") // cash, credit
+  address         String?
+  currentBalance  Float     @default(0)
+  // Classification & driver/payment extension (optional, backward-compatible)
+  ownerType             String?  // individual, organization, broker
+  role                  String?  // owner, driver, owner_driver
+  driverName            String?
+  driverPhone           String?
+  driverLicenseNumber   String?
+  bankName              String?
+  bankAccountHolder     String?
+  bankAccountNumber     String?
+  paymentMethod         String?  // cash, bank_transfer, mobile_banking
+  createdAt       DateTime  @default(now())
+
+  vehicles        RentalVehicle[]
+  payments        RentalPayment[]
+}
+
+model RentalVehicle {
+  id              String    @id @default(uuid())
+  ownerId         String
+  plateNumber     String    @unique
+  vehicleType     String    // cement_tanker, gravel_tipper, flatbed
+  capacityTons    Float
+  ratePerTon      Float?
+  ratePerTrip     Float?
+  paymentTerms    String    @default("cash")
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+
+  owner           RentalOwner @relation(fields: [ownerId], references: [id])
+  rentalTrips     RentalTrip[]
+}
+
+model RentalTrip {
+  id              String    @id @default(uuid())
+  rentalVehicleId String
+  customerId      String?
+  tripDate        DateTime  @default(now())
+  pickupLocation  String
+  deliveryLocation String
+  quantityTons    Float
+  ratePerTon      Float?
+  ratePerTrip     Float?
+  customerRevenue Float
+  rentalPayable   Float
+  grossMargin     Float
+  status          String    @default("completed")
+  notes           String?
+  createdAt       DateTime  @default(now())
+
+  rentalVehicle   RentalVehicle @relation(fields: [rentalVehicleId], references: [id])
+}
+
+model RentalPayment {
+  id          String   @id @default(uuid())
+  ownerId     String
+  amount      Float
+  type        String   // payment, advance
+  reference   String?
+  notes       String?
+  cashierId   String?
+  paidAt      DateTime @default(now())
+
+  owner       RentalOwner @relation(fields: [ownerId], references: [id])
+  cashier     Cashier?    @relation(fields: [cashierId], references: [id])
+}
+
+// ─── CASHIER & CASH FLOW ─────────────────────────────────────────────────────
+model Cashier {
+  id              String    @id @default(uuid())
+  userId          String    @unique
+  name            String
+  location        String?
+  code            String?   @unique
+  floatAmount     Float     @default(0)
+  currentBalance  Float     @default(0)
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+
+  user            User      @relation(fields: [userId], references: [id])
+  transactions    CashTransaction[]
+  advancesPaid    DriverAdvance[] @relation("AdvanceCashier")
+  rentalPayments  RentalPayment[]
+  fuelPaid        FuelLog[]
+  cashAllocations CashAllocation[]
+  sessions        CashierSession[]
+  transfersFrom   CashTransfer[] @relation("TransferFrom")
+  transfersTo     CashTransfer[] @relation("TransferTo")
+}
+
+model CashTransaction {
+  id              String    @id @default(uuid())
+  cashierId       String
+  type            String    // in, out
+  category        String    // driver_advance, fuel, garage, spare_part, salary, rental, revenue, broker_commission, other
+  amount          Float
+  receiverName    String?
+  paymentMethod   String    @default("cash") // cash, bank_transfer, mobile_money, cheque
+  bankReference   String?
+  transferReference String?
+  mobileReference String?
+  proofAttachment String?
+  referenceId     String?
+  referenceType   String?
+  description     String
+  approvedBy      String?
+  approvedAt      DateTime?
+  reconciled      Boolean   @default(false)
+  reconciledAt    DateTime?
+  createdAt       DateTime  @default(now())
+
+  cashier         Cashier   @relation(fields: [cashierId], references: [id])
+}
+
+// ─── DRIVER ADVANCES ──────────────────────────────────────────────────────────
+model DriverAdvance {
+  id              String    @id @default(uuid())
+  driverId        String
+  tripId          String?
+  amount          Float
+  reason          String?
+  cashierId       String?
+  status          String    @default("requested") // requested, approved, paid
+  requestedAt     DateTime  @default(now())
+  approvedById    String?
+  approvedAt      DateTime?
+  paidAt          DateTime?
+
+  driver          Employee  @relation(fields: [driverId], references: [id])
+  trip            Trip?     @relation(fields: [tripId], references: [id])
+  cashier         Cashier?  @relation("AdvanceCashier", fields: [cashierId], references: [id])
+  approvedBy      User?     @relation("AdvanceApprover", fields: [approvedById], references: [id])
+}
+
+// ─── FUEL LOGS ────────────────────────────────────────────────────────────────
+model FuelLog {
+  id              String    @id @default(uuid())
+  vehicleId       String
+  tripId          String?
+  driverId        String?
+  date            DateTime  @default(now())
+  liters          Float
+  costPerLiter    Float
+  totalCost       Float
+  odometerKm      Float?
+  fuelStation     String?
+  cashierId       String?
+  notes           String?
+  createdAt       DateTime  @default(now())
+
+  vehicle         Vehicle   @relation(fields: [vehicleId], references: [id])
+  trip            Trip?     @relation(fields: [tripId], references: [id])
+  driver          Employee? @relation("DriverFuelLogs", fields: [driverId], references: [id])
+  cashier         Cashier?  @relation(fields: [cashierId], references: [id])
+}
+
+// ─── KM LOGS ──────────────────────────────────────────────────────────────────
+model KmLog {
+  id          String   @id @default(uuid())
+  vehicleId   String
+  date        DateTime @default(now())
+  kmReading   Float
+  tripId      String?
+  notes       String?
+  createdAt   DateTime @default(now())
+
+  vehicle     Vehicle  @relation(fields: [vehicleId], references: [id])
+}
+
+// ─── HR & PAYROLL ─────────────────────────────────────────────────────────────
+model Attendance {
+  id              String    @id @default(uuid())
+  employeeId      String
+  date            DateTime
+  status          String    // present, absent, leave, half_day, holiday
+  checkIn         DateTime?
+  checkOut        DateTime?
+  overtimeHours   Float     @default(0)
+  notes           String?
+  createdAt       DateTime  @default(now())
+
+  employee        Employee  @relation(fields: [employeeId], references: [id])
+
+  @@unique([employeeId, date])
+}
+
+model Payroll {
+  id                  String    @id @default(uuid())
+  employeeId          String
+  month               Int
+  year                Int
+  basicSalary         Float
+  perDiem             Float     @default(0)
+  incentives          Float     @default(0)
+  overtimePay         Float     @default(0)
+  totalEarnings       Float
+  advanceDeduction    Float     @default(0)
+  shortageDeduction   Float     @default(0)
+  loanDeduction       Float     @default(0)
+  absenceDeduction    Float     @default(0)
+  taxDeduction        Float     @default(0)
+  otherDeductions     Float     @default(0)
+  totalDeductions     Float
+  netSalary           Float
+  status              String    @default("draft") // draft, approved, paid
+  approvedById        String?
+  approvedAt          DateTime?
+  paidAt              DateTime?
+  paymentMethod       String?   // bank, cash
+  notes               String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  employee            Employee  @relation(fields: [employeeId], references: [id])
+  approvedBy          User?     @relation("PayrollApprover", fields: [approvedById], references: [id])
+
+  @@unique([employeeId, month, year])
+}
+
+// ─── ASSET DEPRECIATION ───────────────────────────────────────────────────────
+model AssetDepreciation {
+  id                  String    @id @default(uuid())
+  vehicleId           String    @unique
+  purchaseCost        Float
+  residualValue       Float
+  usefulLifeYears     Float
+  method              String    @default("straight_line")
+  monthlyDepreciation Float
+  accumulatedDepr     Float     @default(0)
+  bookValue           Float
+  startDate           DateTime
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  vehicle             Vehicle   @relation(fields: [vehicleId], references: [id])
+  monthlyEntries      DepreciationEntry[]
+}
+
+model DepreciationEntry {
+  id              String    @id @default(uuid())
+  assetId         String
+  month           Int
+  year            Int
+  amount          Float
+  annualDepreciation Float?
+  bookValueAfter  Float
+  createdAt       DateTime  @default(now())
+
+  assetDepreciation AssetDepreciation @relation(fields: [assetId], references: [id])
+
+  @@unique([assetId, month, year])
+}
+
+// ─── INVOICES ─────────────────────────────────────────────────────────────────
+model Invoice {
+  id              String    @id @default(uuid())
+  invoiceNumber   String    @unique
+  customerId      String
+  orderId         String?   @unique
+  settlementId    String?   @unique
+  invoiceDate     DateTime  @default(now())
+  dueDate         DateTime?
+  subtotal        Float
+  vatRate         Float     @default(0)   // VAT percentage
+  vatAmount       Float     @default(0)
+  withholdingTaxRate Float  @default(0)   // WHT percentage
+  withholdingTaxAmount Float @default(0)
+  taxAmount       Float     @default(0)   // legacy/total tax
+  totalAmount     Float
+  paidAmount      Float     @default(0)
+  balanceDue      Float
+  isTaxExempt     Boolean   @default(false)
+  status          String    @default("unpaid") // unpaid, partial, paid, overdue
+  receiptReference String?
+  notes           String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  customer        Customer  @relation(fields: [customerId], references: [id])
+  order           CustomerOrder? @relation(fields: [orderId], references: [id])
+  settlement      Settlement?    @relation("SettlementInvoice", fields: [settlementId], references: [id])
+  payments        InvoicePayment[]
+}
+
+model InvoicePayment {
+  id              String   @id @default(uuid())
+  invoiceId       String
+  amount          Float
+  method          String   // cash, bank_transfer, cheque, mobile_money
+  reference       String?
+  bankReference   String?
+  transferReference String?
+  proofAttachment String?
+  reconciliationStatus String @default("unmatched") // unmatched, matched, disputed
+  paidAt          DateTime @default(now())
+  receivedBy      String?
+  notes           String?
+
+  invoice         Invoice  @relation(fields: [invoiceId], references: [id])
+}
+
+// ─── NOTIFICATIONS ────────────────────────────────────────────────────────────
+model Notification {
+  id          String   @id @default(uuid())
+  userId      String
+  type        String   // maintenance_due, breakdown, low_stock, payroll, order, etc.
+  title       String
+  message     String
+  referenceId String?
+  referenceType String?
+  isRead      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  user        User     @relation(fields: [userId], references: [id])
+}
+
+// ─── VEHICLE HANDOVER ───────────────────────────────────────────────────────
+model VehicleHandover {
+  id                  String    @id @default(uuid())
+  vehicleId           String
+  fromDriverId        String
+  toDriverId          String
+  supervisorId        String?
+  handoverDate        DateTime  @default(now())
+  location            String?
+  kmReading           Float?
+  fuelLevel           String?   // full, 3/4, 1/2, 1/4, empty
+  status              String    @default("pending") // pending, accepted, rejected
+  rejectionReason     String?
+  photos              String?   // JSON array of file paths
+  notes               String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  vehicle             Vehicle   @relation(fields: [vehicleId], references: [id])
+  fromDriver          Employee  @relation("HandoverFromDriver", fields: [fromDriverId], references: [id])
+  toDriver            Employee  @relation("HandoverToDriver", fields: [toDriverId], references: [id])
+  supervisor          Employee? @relation("HandoverSupervisor", fields: [supervisorId], references: [id])
+  checklistItems      HandoverChecklistItem[]
+}
+
+model HandoverChecklistItem {
+  id              String    @id @default(uuid())
+  handoverId      String
+  itemName        String
+  partNumber      String?
+  serialNumber    String?
+  quantity        Int       @default(1)
+  status          String    // good, damaged, missing, needs_replacement
+  remarks         String?
+  photo           String?
+
+  handover        VehicleHandover @relation(fields: [handoverId], references: [id])
+}
+
+// ─── DRIVER FINANCIAL LEDGER ────────────────────────────────────────────────
+model DriverLedgerEntry {
+  id              String    @id @default(uuid())
+  driverId        String
+  date            DateTime  @default(now())
+  type            String    // credit, debit
+  category        String    // salary, per_diem, incentive, advance, shortage, fine, loan, other
+  amount          Float
+  balance         Float     @default(0)
+  referenceId     String?
+  referenceType   String?   // trip, payroll, advance
+  description     String
+  createdAt       DateTime  @default(now())
+
+  driver          Employee  @relation(fields: [driverId], references: [id])
+}
+
+// ─── TELEGRAM NOTIFICATIONS ─────────────────────────────────────────────────
+model TelegramConfig {
+  id              String    @id @default(uuid())
+  botToken        String
+  chatIds         String    // JSON array of { chatId, label, levels[] } (legacy manual targets)
+  roleRules       String?   // JSON: { role: { levels: [], categories: [] } }
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+model TelegramLog {
+  id              String    @id @default(uuid())
+  level           String    // critical, urgent, warning, info
+  category        String    // compliance, maintenance, trip, order, breakdown, inventory, payroll, system
+  title           String
+  message         String
+  chatId          String
+  success         Boolean   @default(true)
+  errorMessage    String?
+  createdAt       DateTime  @default(now())
+}
+
+// ─── AUDIT LOG ──────────────────────────────────────────────────────────────
+model AuditLog {
+  id              String    @id @default(uuid())
+  userId          String?
+  action          String    // create, update, delete, approve, reject, login
+  entityType      String    // order, trip, work_order, purchase, payroll, handover, etc.
+  entityId        String?
+  details         String?   // JSON of changes
+  ipAddress       String?
+  createdAt       DateTime  @default(now())
+
+  user            User?     @relation(fields: [userId], references: [id])
+}
+
+// ─── CENTRAL CASH MANAGEMENT (#1) ──────────────────────────────────────────
+model MainCashCenter {
+  id              String    @id @default(uuid())
+  name            String    @default("Main Cash Center")
+  totalBalance    Float     @default(0)
+  lastReconciledAt DateTime? @default(now())
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  allocations     CashAllocation[]
+}
+
+model CashAllocation {
+  id              String    @id @default(uuid())
+  mainCashId      String
+  cashierId       String?
+  type            String    // allocation, return, deposit
+  amount          Float
+  reference       String?
+  notes           String?
+  allocatedBy     String
+  createdAt       DateTime  @default(now())
+
+  mainCash        MainCashCenter @relation(fields: [mainCashId], references: [id])
+  cashier         Cashier?  @relation(fields: [cashierId], references: [id])
+}
+
+// ─── DRIVER PERFORMANCE (#6) ──────────────────────────────────────────────
+model DriverScore {
+  id              String    @id @default(uuid())
+  driverId        String
+  month           Int
+  year            Int
+  tripCount       Int       @default(0)
+  totalScore      Float     @default(0)
+  tripScore       Float     @default(0)
+  shortageScore   Float     @default(0)
+  cycleTimeScore  Float     @default(0)
+  fuelScore       Float     @default(0)
+  attendanceScore Float     @default(0)
+  safetyScore     Float     @default(0)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  driver          Employee  @relation(fields: [driverId], references: [id])
+
+  @@unique([driverId, month, year])
+}
+
+model DriverScoreConfig {
+  id                  String    @id @default(uuid())
+  tripCountWeight     Float     @default(20)
+  shortageWeight      Float     @default(25)
+  cycleTimeWeight     Float     @default(20)
+  fuelEfficiencyWeight Float    @default(15)
+  attendanceWeight    Float     @default(10)
+  safetyWeight        Float     @default(10)
+  updatedAt           DateTime  @updatedAt
+}
+
+// ─── DRIVER REWARDS & PENALTIES (#7) ──────────────────────────────────────
+model DriverRewardPenalty {
+  id              String    @id @default(uuid())
+  driverId        String
+  ruleId          String?
+  type            String    // reward, penalty
+  amount          Float
+  reason          String?
+  month           Int?
+  year            Int?
+  status          String    @default("pending") // pending, approved, applied
+  approvedBy      String?
+  createdAt       DateTime  @default(now())
+
+  driver          Employee  @relation(fields: [driverId], references: [id])
+  rule            RewardPenaltyRule? @relation(fields: [ruleId], references: [id])
+}
+
+model RewardPenaltyRule {
+  id              String    @id @default(uuid())
+  name            String
+  type            String    // reward, penalty
+  trigger         String    @default("score") // score, manual
+  minScore        Float?
+  maxScore        Float?
+  amount          Float     @default(0)
+  description     String?
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+
+  rewardPenalties DriverRewardPenalty[]
+}
+
+// ─── DOCUMENT STORAGE (#16) ───────────────────────────────────────────────
+model Document {
+  id              String    @id @default(uuid())
+  entityType      String    // vehicle, employee, trip, order, work_order, customer
+  entityId        String
+  category        String    @default("general")
+  fileName        String
+  filePath        String
+  fileSize        Int?
+  mimeType        String?
+  notes           String?
+  expiryDate      DateTime?
+  uploadedBy      String
+  createdAt       DateTime  @default(now())
+
+  @@index([entityType, entityId])
+}
+
+// ─── ACCOUNTING (#2) ──────────────────────────────────────────────────────
+model Account {
+  id              String    @id @default(uuid())
+  code            String    @unique
+  name            String
+  category        String    // asset, liability, equity, revenue, expense
+  type            String    @default("detail")  // header, detail
+  parentId        String?
+  description     String?
+  isActive        Boolean   @default(true)
+  balance         Float     @default(0)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  parent          Account?  @relation("AccountTree", fields: [parentId], references: [id])
+  children        Account[] @relation("AccountTree")
+  lines           JournalEntryLine[]
+}
+
+model JournalEntry {
+  id              String    @id @default(uuid())
+  entryNumber     String    @unique
+  date            DateTime  @default(now())
+  description     String
+  reference       String?
+  source          String    @default("manual") // manual, auto
+  sourceType      String?   // trip, fuel, advance, settlement, cash_transfer, maintenance, depreciation
+  sourceId        String?   // ID of the source entity
+  status          String    @default("posted") // draft, posted, reversed
+  totalAmount     Float     @default(0)
+  createdBy       String?
+  createdAt       DateTime  @default(now())
+
+  lines           JournalEntryLine[]
+}
+
+model JournalEntryLine {
+  id              String    @id @default(uuid())
+  journalEntryId  String
+  accountId       String
+  description     String    @default("")
+  debit           Float     @default(0)
+  credit          Float     @default(0)
+
+  journalEntry    JournalEntry @relation(fields: [journalEntryId], references: [id])
+  account         Account      @relation(fields: [accountId], references: [id])
+}
+
+model FiscalPeriod {
+  id              String    @id @default(uuid())
+  name            String
+  month           Int
+  year            Int
+  type            String    @default("month") // month, quarter, year
+  startDate       DateTime
+  endDate         DateTime
+  isClosed        Boolean   @default(false)
+  closedAt        DateTime?
+  closedById      String?
+
+  @@unique([month, year])
+}
+
+// ─── PHASE 2: ORDER REVISIONS ────────────────────────────────────────────────
+model OrderRevision {
+  id              String    @id @default(uuid())
+  orderId         String
+  revisionNumber  Int
+  fieldChanged    String    // ratePerTon, quantity, deliveryLocation, etc.
+  oldValue        String
+  newValue        String
+  reason          String
+  changedBy       String?
+  approvedBy      String?
+  approvedAt      DateTime?
+  status          String    @default("pending") // pending, approved, rejected
+  createdAt       DateTime  @default(now())
+
+  order           CustomerOrder @relation(fields: [orderId], references: [id])
+}
+
+// ─── PHASE 2: ORDER PENALTIES ────────────────────────────────────────────────
+model OrderPenalty {
+  id                String    @id @default(uuid())
+  orderId           String
+  tripId            String?
+  type              String    // shortage, delay, damage, demurrage
+  description       String?
+  quantityAffected  Float?
+  rateApplied       Float?
+  amount            Float
+  status            String    @default("pending") // pending, approved, waived, applied
+  approvedBy        String?
+  approvedAt        DateTime?
+  waivedBy          String?
+  waivedReason      String?
+  waivedAt          DateTime?
+  createdAt         DateTime  @default(now())
+
+  order             CustomerOrder @relation(fields: [orderId], references: [id])
+  trip              Trip?         @relation(fields: [tripId], references: [id])
+}
+
+// ─── PHASE 2: VEHICLE SWAP LOG ───────────────────────────────────────────────
+model VehicleSwapLog {
+  id              String    @id @default(uuid())
+  tripId          String
+  fromVehicleId   String
+  toVehicleId     String
+  reason          String
+  swappedBy       String?
+  approvedBy      String?
+  swappedAt       DateTime  @default(now())
+
+  trip            Trip      @relation(fields: [tripId], references: [id])
+}
+
+// ─── PHASE 2: SETTLEMENT ────────────────────────────────────────────────────
+model Settlement {
+  id                  String    @id @default(uuid())
+  settlementNumber    String    @unique
+  orderId             String
+  customerId          String
+  totalDeliveredTons  Float
+  baseRate            Float
+  adjustedRate        Float?
+  grossAmount         Float
+  totalPenalties      Float     @default(0)
+  totalPerDiem        Float     @default(0)
+  netAmount           Float
+  // Customer collection tracking (Part B7)
+  shortageQuantity    Float     @default(0)
+  shortageValue       Float     @default(0)
+  customerDeductionAmount Float @default(0)
+  finalCollectibleAmount Float  @default(0)
+  collectedAmount     Float     @default(0)
+  remainingAmount     Float     @default(0)
+  status              String    @default("draft") // draft, reviewed, approved, invoiced
+  reviewedBy          String?
+  reviewedAt          DateTime?
+  approvedBy          String?
+  approvedAt          DateTime?
+  notes               String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  order               CustomerOrder @relation(fields: [orderId], references: [id])
+  lines               SettlementLine[]
+  invoice             Invoice?  @relation("SettlementInvoice")
+}
+
+// ─── PHASE 2: SETTLEMENT LINE ───────────────────────────────────────────────
+model SettlementLine {
+  id              String    @id @default(uuid())
+  settlementId    String
+  tripId          String?
+  type            String    // delivery, penalty_shortage, penalty_delay, per_diem, adjustment
+  description     String?
+  quantity        Float?
+  rate            Float?
+  amount          Float
+
+  settlement      Settlement @relation(fields: [settlementId], references: [id])
+}
+
+// ─── PHASE 3: CASHIER SESSION ─────────────────────────────────────────────────
+model CashierSession {
+  id              String    @id @default(uuid())
+  cashierId       String
+  sessionDate     String    // YYYY-MM-DD
+  openingBalance  Float
+  closingBalance  Float?
+  totalCashIn     Float     @default(0)
+  totalCashOut    Float     @default(0)
+  expectedBalance Float?
+  variance        Float?
+  status          String    @default("open") // open, closed, reconciled
+  openedAt        DateTime  @default(now())
+  closedAt        DateTime?
+  closedBy        String?
+  reconciledBy    String?
+  reconciledAt    DateTime?
+  notes           String?
+
+  cashier         Cashier   @relation(fields: [cashierId], references: [id])
+
+  @@unique([cashierId, sessionDate])
+}
+
+// ─── PHASE 3: CASH TRANSFER ──────────────────────────────────────────────────
+model CashTransfer {
+  id              String    @id @default(uuid())
+  transferNumber  String    @unique
+  fromCashierId   String
+  toCashierId     String
+  amount          Float
+  reason          String
+  status          String    @default("pending") // pending, approved, completed, rejected
+  requestedBy     String?
+  approvedBy      String?
+  approvedAt      DateTime?
+  rejectedBy      String?
+  rejectedReason  String?
+  completedAt     DateTime?
+  createdAt       DateTime  @default(now())
+
+  fromCashier     Cashier   @relation("TransferFrom", fields: [fromCashierId], references: [id])
+  toCashier       Cashier   @relation("TransferTo", fields: [toCashierId], references: [id])
+}
+
+// ─── PHASE 5: APPROVAL WORKFLOW ─────────────────────────────────────────────
+model ApprovalRequest {
+  id              String    @id @default(uuid())
+  requestNumber   String    @unique
+  type            String    // rate_adjustment, penalty_waiver, vehicle_swap, large_advance, cash_transfer, invoice_cancellation, settlement_override, compliance_unlock
+  entityType      String    // order, penalty, trip, advance, cash_transfer, invoice, settlement, vehicle
+  entityId        String
+  requestedBy     String?
+  description     String
+  amount          Float?
+  currentData     String?   // JSON string
+  proposedData    String?   // JSON string
+  status          String    @default("pending") // pending, approved, rejected, expired
+  approvedBy      String?
+  approvedAt      DateTime?
+  rejectedBy      String?
+  rejectedAt      DateTime?
+  rejectionReason String?
+  priority        String    @default("normal") // low, normal, high, urgent
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+model ApprovalRule {
+  id              String    @id @default(uuid())
+  type            String    @unique // matches ApprovalRequest.type
+  requiredRole    String    @default("admin") // role required to approve
+  thresholdAmount Float?    // amount above which approval is required
+  description     String?
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+// ─── ACCOUNTING CONFIG (Auto Double-Entry Mappings) ─────────────────
+model AccountingConfig {
+  id                String    @id @default(uuid())
+  transactionType   String    @unique // trip_revenue, fuel_purchase, driver_advance, cash_transfer, maintenance, settlement, depreciation
+  debitAccountId    String
+  creditAccountId   String
+  description       String?
+  isActive          Boolean   @default(true)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+}
+
+// ─── ALERTS & EXCEPTIONS ────────────────────────────────────────────
+model Alert {
+  id              String    @id @default(uuid())
+  type            String    // delayed_loading, delayed_delivery, missing_pod, qty_mismatch, repeated_breakdown, unusual_expense, expired_docs, cash_variance, overdue_invoice, unresolved_accountability
+  severity        String    @default("warning") // critical, urgent, warning, info
+  title           String
+  message         String
+  entityType      String?   // trip, vehicle, order, cashier, invoice, employee
+  entityId        String?
+  isResolved      Boolean   @default(false)
+  resolvedBy      String?
+  resolvedAt      DateTime?
+  resolvedNote    String?
+  autoGenerated   Boolean   @default(true)
+  assignedTo      String?
+  dueAt           DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+model AlertRule {
+  id              String    @id @default(uuid())
+  type            String    @unique // matches Alert.type
+  description     String?
+  thresholdValue  Float?
+  thresholdUnit   String?   // hours, days, tons, ETB, percent
+  severity        String    @default("warning")
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+// ─── TYRE LIFECYCLE TRACKING ────────────────────────────────────────────────
+model TyreAsset {
+  id                String    @id @default(uuid())
+  serialNumber      String    @unique
+  brand             String?
+  size              String?
+  pattern           String?
+  purchaseCost      Float     @default(0)
+  purchaseDate      DateTime?
+  supplierId        String?
+  currentVehicleId  String?
+  firstVehicleId    String?
+  position          String?   // FL, FR, RL1, RL2, RR1, RR2, spare
+  fitmentDate       DateTime?
+  removalDate       DateTime?
+  fitmentKm         Float?
+  removalKm         Float?
+  totalKmRun        Float     @default(0)
+  condition         String    @default("new") // new, good, fair, worn, scrap, retread
+  status            String    @default("in_stock") // in_stock, fitted, removed, scrap, retread, sold
+  retreadCount      Int       @default(0)
+  costPerKm         Float?
+  notes             String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  currentVehicle    Vehicle?  @relation(fields: [currentVehicleId], references: [id])
+  history           TyreHistory[]
+}
+
+model TyreHistory {
+  id              String    @id @default(uuid())
+  tyreAssetId     String
+  action          String    // fitted, removed, rotated, retread, scrapped, transferred
+  vehiclePlate    String?
+  position        String?
+  kmAtAction      Float?
+  reason          String?
+  performedBy     String?
+  createdAt       DateTime  @default(now())
+
+  tyreAsset       TyreAsset @relation(fields: [tyreAssetId], references: [id])
+}
+
+// ─── PART RETURN / OLD PART CONTROL ─────────────────────────────────────────
+model PartReturn {
+  id              String    @id @default(uuid())
+  inventoryId     String?
+  vehicleId       String?
+  vehiclePlate    String?
+  partName        String
+  partNumber      String?
+  serialNumber    String?
+  oldPartSerial   String?
+  newPartSerial   String?
+  quantity        Float     @default(1)
+  returnedToStore Boolean   @default(false)
+  condition       String?   // reusable, scrap, retread
+  verifiedBy      String?
+  verifiedAt      DateTime?
+  workOrderId     String?
+  notes           String?
+  createdAt       DateTime  @default(now())
+}
+
+// ─── FUEL STANDARDS & VARIANCE ──────────────────────────────────────────────
+model FuelStandard {
+  id              String    @id @default(uuid())
+  vehicleId       String?
+  vehicleCategory String?   // if standard applies to a category
+  route           String?   // e.g. "Mugher -> Addis Ababa"
+  standardLiters  Float     // expected fuel consumption
+  standardKmPerLiter Float? // km per liter standard
+  isActive        Boolean   @default(true)
+  supplierId      String?
+  notes           String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  vehicle         Vehicle?  @relation(fields: [vehicleId], references: [id])
+  supplier        Supplier? @relation("FuelSupplier", fields: [supplierId], references: [id])
+}
+
+// ─── ACCIDENT / INCIDENT / INSURANCE CLAIM ──────────────────────────────────
+model AccidentRecord {
+  id                String    @id @default(uuid())
+  accidentNumber    String    @unique
+  accidentDate      DateTime
+  location          String
+  vehicleId         String
+  trailerId         String?   // trailer plate if relevant
+  driverId          String?
+  description       String
+  photos            String?   // JSON array
+  policeRefNumber   String?
+  thirdPartyName    String?
+  thirdPartyPhone   String?
+  thirdPartyVehicle String?
+  thirdPartyInsurer String?
+  damageEstimate    Float?
+  actualRepairCost  Float?
+  insuranceClaimRef String?
+  insuranceClaimStatus String? // pending, submitted, approved, rejected, settled
+  insuranceClaimAmount Float?
+  insurancePaidAmount Float?
+  repairStatus      String    @default("pending") // pending, in_progress, completed
+  responsibility    String?   // our_driver, third_party, shared, unknown
+  workOrderId       String?
+  notes             String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  vehicle           Vehicle   @relation(fields: [vehicleId], references: [id])
+}
+
+// ─── COMPANY LEGAL DOCUMENTS ────────────────────────────────────────────────
+model CompanyDocument {
+  id              String    @id @default(uuid())
+  documentType    String    // business_license, tin_certificate, insurance_policy, trade_license, vat_registration, other
+  documentName    String
+  documentNumber  String?
+  issueDate       DateTime?
+  expiryDate      DateTime?
+  issuingAuthority String?
+  filePath        String?
+  status          String    @default("active") // active, expired, pending_renewal
+  alertBeforeDays Int       @default(30)
+  notes           String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+// ─── REVENUE SHARING MODEL (Section 10) ─────────────────────────────────────
+model RevenueShareContract {
+  id                String    @id @default(uuid())
+  contractNumber    String    @unique
+  powerOwnerId      String?   // external power unit owner (RentalOwner)
+  powerVehiclePlate String    // rented power unit plate
+  companyTrailerPlate String?  // company trailer/tanker plate
+  ownerSharePercent Float     // e.g. 50.0
+  companySharePercent Float   // e.g. 50.0
+  expenseResponsibility String? // JSON: which expenses company covers
+  startDate         DateTime
+  endDate           DateTime?
+  status            String    @default("active") // active, ended, suspended
+  notes             String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  trips             RevenueShareTrip[]
+  settlements       RevenueShareSettlement[]
+}
+
+model RevenueShareTrip {
+  id                String    @id @default(uuid())
+  contractId        String
+  vehicleId         String?   // power unit
+  tripDate          DateTime  @default(now())
+  route             String?
+  customer          String?
+  quantityTons      Float?
+  tripRevenue       Float
+  fuelCost          Float     @default(0)
+  driverPerDiem     Float     @default(0)
+  gpsCost           Float     @default(0)
+  insuranceCost     Float     @default(0)
+  brokerCommission  Float     @default(0)
+  otherExpenses     Float     @default(0)
+  totalExpenses     Float     @default(0)
+  netIncome         Float     @default(0)
+  ownerShare        Float     @default(0)
+  companyShare      Float     @default(0)
+  notes             String?
+  createdAt         DateTime  @default(now())
+
+  contract          RevenueShareContract @relation(fields: [contractId], references: [id])
+  vehicle           Vehicle?  @relation(fields: [vehicleId], references: [id])
+}
+
+model RevenueShareSettlement {
+  id                String    @id @default(uuid())
+  settlementNumber  String    @unique
+  contractId        String
+  month             Int
+  year              Int
+  totalTrips        Int       @default(0)
+  totalRevenue      Float     @default(0)
+  totalExpenses     Float     @default(0)
+  netIncome         Float     @default(0)
+  ownerPayable      Float     @default(0)
+  companyShare      Float     @default(0)
+  status            String    @default("draft") // draft, approved, paid
+  approvedBy        String?
+  approvedAt        DateTime?
+  paidAt            DateTime?
+  notes             String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  contract          RevenueShareContract @relation(fields: [contractId], references: [id])
+
+  @@unique([contractId, month, year])
+}
+
+// ─── BROKER / COMMISSION CONTROL (Section 11) ───────────────────────────────
+model Broker {
+  id              String    @id @default(uuid())
+  name            String
+  phone           String?
+  email           String?
+  commissionType  String    @default("percentage") // percentage, fixed
+  defaultRate     Float     @default(0)  // default commission rate
+  status          String    @default("active") // active, inactive
+  totalEarned     Float     @default(0)
+  totalPaid       Float     @default(0)
+  balance         Float     @default(0)
+  notes           String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  commissions     BrokerCommission[]
+}
+
+model BrokerCommission {
+  id              String    @id @default(uuid())
+  brokerId        String
+  tripId          String?
+  orderId         String?
+  commissionType  String    // percentage, fixed
+  rate            Float?    // percentage rate
+  amount          Float
+  tripRevenue     Float?
+  status          String    @default("unpaid") // unpaid, approved, paid
+  approvedBy      String?
+  approvedAt      DateTime?
+  paidAt          DateTime?
+  paymentRef      String?
+  notes           String?
+  createdAt       DateTime  @default(now())
+
+  broker          Broker    @relation(fields: [brokerId], references: [id])
+}
+
+// ─── PAYMENT REQUEST & APPROVAL (Part B1) ───────────────────────────────────
+model PaymentRequest {
+  id                    String    @id @default(uuid())
+  requestNumber         String    @unique
+  requestDate           DateTime  @default(now())
+  department            String?   // fleet, workshop, store, office, admin, hr
+  requestedById         String?
+  paymentType           String    // advance, fuel, garage, spare_part, salary, rental, po_payment, settlement, other
+  payee                 String
+  amount                Float
+  description           String
+  referenceType         String    // trip, work_order, po, payroll, settlement
+  referenceId           String
+  dueDate               DateTime?
+  supportingDoc         String?   // attachment path
+  status                String    @default("draft") // draft, submitted, approved, rejected, paid, partially_paid, closed
+  paidAmount            Float     @default(0)
+  approvedById          String?
+  approvedAt            DateTime?
+  rejectedById          String?
+  rejectedReason        String?
+  paidById              String?
+  paidAt                DateTime?
+  cashTransactionId     String?
+  // Payee bank / transfer details (client requirement)
+  payeeBank             String?
+  payeeAccountHolder    String?
+  payeeAccountNumber    String?
+  paymentMethod         String?   // cash, bank_transfer, mobile_banking
+  // Vehicle linkage for fuel/maintenance payments
+  vehicleId             String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+}
+
+// ─── CONTRACT EXPIRY TRACKING ───────────────────────────────────────────────
+model ContractExpiry {
+  id              String    @id @default(uuid())
+  contractType    String    // supplier, customer, rental, service, insurance
+  entityType      String    // supplier, customer, rental_owner
+  entityId        String
+  entityName      String
+  contractRef     String?
+  startDate       DateTime?
+  expiryDate      DateTime
+  alertBeforeDays Int       @default(30)
+  status          String    @default("active") // active, expired, renewed
+  notes           String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
