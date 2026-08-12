@@ -1,7 +1,5 @@
-# Nixpacks configuration for Dokploy deployment
-
-[providers]
 providers = ["node"]
+
 
 [phases.setup]
 nixPkgs = ["nodejs_20", "pnpm", "openssl"]
