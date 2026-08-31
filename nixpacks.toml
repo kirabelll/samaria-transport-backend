@@ -15,4 +15,4 @@ cmds = [
 ]
 
 [start]
-cmd = "npx prisma db push && pnpm start"
+cmd = "npx prisma db push && npx prisma db seed && pnpm start"
