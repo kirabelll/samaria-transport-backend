@@ -103,15 +103,9 @@ app.use('/api/search', searchRoutes);
 
 app.get('/api/health', (_, res) => res.json({ status: 'ok', time: new Date() }));
 
-// ─── Serve the frontend SPA ──────────────────────────────────────────────────
-// In production the backend serves the built frontend so a single port (5000)
-// covers the whole app: frontend + /api + /uploads. The reverse proxy then only
-// needs one proxy_pass. Override the path with FRONTEND_DIST if needed.
 const frontendDist = process.env.FRONTEND_DIST || path.join(__dirname, '../../frontend/dist');
 if (fs.existsSync(frontendDist)) {
   app.use(express.static(frontendDist));
-  // SPA fallback: any non-API, non-uploads GET returns index.html so client-side
-  // routing (React Router) works on hard refresh / deep links.
   app.get('*', (req, res, next) => {
     if (req.path.startsWith('/api') || req.path.startsWith('/uploads')) return next();
     res.sendFile(path.join(frontendDist, 'index.html'));

@@ -138,4 +138,72 @@ router.post('/:driverId/sync', async (req: AuthRequest, res: Response) => {
   } catch (e: any) { return res.status(500).json({ error: e.message }); }
 });
 
+// Delete a specific ledger entry
+router.delete('/entry/:id', async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const entry = await prisma.driverLedgerEntry.findUnique({ where: { id } });
+    if (!entry) return res.status(404).json({ error: 'Ledger entry not found' });
+
+    await prisma.driverLedgerEntry.delete({ where: { id } });
+
+    try {
+      let validUserId = req.user?.id;
+      if (validUserId) {
+        const userExists = await prisma.user.findUnique({ where: { id: validUserId } });
+        if (!userExists) validUserId = undefined;
+      }
+      await prisma.auditLog.create({
+        data: {
+          userId: validUserId,
+          action: 'delete',
+          entityType: 'driver_ledger_entry',
+          entityId: id,
+          details: JSON.stringify({ driverId: entry.driverId, type: entry.type, category: entry.category, amount: entry.amount, description: entry.description })
+        }
+      });
+    } catch (auditErr) {
+      console.warn('AuditLog entry deletion ignored:', auditErr);
+    }
+
+    return res.json({ message: 'Ledger entry deleted successfully' });
+  } catch (e: any) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+// Clear / delete all ledger entries for a driver
+router.delete('/:driverId', async (req: AuthRequest, res: Response) => {
+  try {
+    const { driverId } = req.params;
+    const driver = await prisma.employee.findUnique({ where: { id: driverId } });
+    if (!driver) return res.status(404).json({ error: 'Driver not found' });
+
+    const deleted = await prisma.driverLedgerEntry.deleteMany({ where: { driverId } });
+
+    try {
+      let validUserId = req.user?.id;
+      if (validUserId) {
+        const userExists = await prisma.user.findUnique({ where: { id: validUserId } });
+        if (!userExists) validUserId = undefined;
+      }
+      await prisma.auditLog.create({
+        data: {
+          userId: validUserId,
+          action: 'delete',
+          entityType: 'driver_ledger',
+          entityId: driverId,
+          details: JSON.stringify({ count: deleted.count })
+        }
+      });
+    } catch (auditErr) {
+      console.warn('AuditLog clear ledger ignored:', auditErr);
+    }
+
+    return res.json({ message: 'Driver ledger cleared successfully', count: deleted.count });
+  } catch (e: any) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
 export default router;
