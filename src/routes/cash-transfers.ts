@@ -193,4 +193,24 @@ router.put('/:id/reject', async (req: AuthRequest, res: Response) => {
   } catch (e: any) { return res.status(500).json({ error: e.message }); }
 });
 
+// Delete single cash transfer
+router.delete('/:id', async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const transfer = await prisma.cashTransfer.findUnique({ where: { id } });
+    if (!transfer) return res.status(404).json({ error: 'Transfer not found' });
+
+    await prisma.cashTransfer.delete({ where: { id } });
+    return res.json({ message: 'Transfer deleted successfully' });
+  } catch (e: any) { return res.status(500).json({ error: e.message }); }
+});
+
+// Clear all cash transfers
+router.delete('/', async (req: AuthRequest, res: Response) => {
+  try {
+    const result = await prisma.cashTransfer.deleteMany({});
+    return res.json({ message: 'Transfers cleared successfully', count: result.count });
+  } catch (e: any) { return res.status(500).json({ error: e.message }); }
+});
+
 export default router;

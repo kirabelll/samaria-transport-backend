@@ -8,6 +8,28 @@ import { sendNotification } from '../utils/telegram';
 const router = Router();
 router.use(authenticate);
 
+async function logAudit(req: AuthRequest, action: string, entityType: string, entityId?: string, details?: any) {
+  try {
+    let validUserId = req.user?.id;
+    if (validUserId) {
+      const userExists = await prisma.user.findUnique({ where: { id: validUserId } });
+      if (!userExists) validUserId = undefined;
+    }
+    await prisma.auditLog.create({
+      data: {
+        userId: validUserId,
+        action,
+        entityType,
+        entityId: entityId || null,
+        details: details ? (typeof details === 'string' ? details : JSON.stringify(details)) : null
+      }
+    });
+  } catch (err) {
+    console.warn('AuditLog ignored:', err);
+  }
+}
+
+// ── Transactions ─────────────────────────────────────────────
 router.get('/transactions', async (req: AuthRequest, res: Response) => {
   try {
     const { cashierId, category, from, to, page='1', limit='30' } = req.query as any;
@@ -21,6 +43,38 @@ router.get('/transactions', async (req: AuthRequest, res: Response) => {
         include: { cashier: { select: { name: true } } } }),
       prisma.cashTransaction.count({ where }) ]);
     return res.json({ transactions, total });
+  } catch (e: any) { return res.status(500).json({ error: e.message }); }
+});
+
+// Delete single transaction
+router.delete('/transactions/:id', async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const tx = await prisma.cashTransaction.findUnique({ where: { id } });
+    if (!tx) return res.status(404).json({ error: 'Transaction not found' });
+
+    // Revert balance on cashier
+    if (tx.type === 'in') {
+      await prisma.cashier.update({ where: { id: tx.cashierId }, data: { currentBalance: { decrement: tx.amount } } });
+    } else if (tx.type === 'out') {
+      await prisma.cashier.update({ where: { id: tx.cashierId }, data: { currentBalance: { increment: tx.amount } } });
+    }
+
+    await prisma.cashTransaction.delete({ where: { id } });
+    await logAudit(req, 'delete', 'cash_transaction', id, { cashierId: tx.cashierId, amount: tx.amount, type: tx.type });
+
+    return res.json({ message: 'Transaction deleted successfully' });
+  } catch (e: any) { return res.status(500).json({ error: e.message }); }
+});
+
+// Clear all transactions (optionally for a specific cashier)
+router.delete('/transactions', async (req: AuthRequest, res: Response) => {
+  try {
+    const { cashierId } = req.query as any;
+    const where = cashierId ? { cashierId } : {};
+    const result = await prisma.cashTransaction.deleteMany({ where });
+    await logAudit(req, 'clear', 'cash_transaction', cashierId, { count: result.count });
+    return res.json({ message: 'Transactions cleared successfully', count: result.count });
   } catch (e: any) { return res.status(500).json({ error: e.message }); }
 });
 
@@ -127,6 +181,32 @@ router.put('/driver-advances/:id/pay', async (req: AuthRequest, res: Response) =
   } catch (e: any) { return res.status(500).json({ error: e.message }); }
 });
 
+// Delete single driver advance
+router.delete('/driver-advances/:id', async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const adv = await prisma.driverAdvance.findUnique({ where: { id } });
+    if (!adv) return res.status(404).json({ error: 'Advance not found' });
+
+    await prisma.driverAdvance.delete({ where: { id } });
+    await logAudit(req, 'delete', 'driver_advance', id, { amount: adv.amount, driverId: adv.driverId });
+    return res.json({ message: 'Driver advance deleted successfully' });
+  } catch (e: any) { return res.status(500).json({ error: e.message }); }
+});
+
+// Clear all driver advances
+router.delete('/driver-advances', async (req: AuthRequest, res: Response) => {
+  try {
+    const { cashierId, driverId } = req.query as any;
+    const where: any = {};
+    if (cashierId) where.cashierId = cashierId;
+    if (driverId) where.driverId = driverId;
+    const result = await prisma.driverAdvance.deleteMany({ where });
+    await logAudit(req, 'clear', 'driver_advance', undefined, { count: result.count });
+    return res.json({ message: 'Driver advances cleared successfully', count: result.count });
+  } catch (e: any) { return res.status(500).json({ error: e.message }); }
+});
+
 router.get('/fuel-logs', async (req: AuthRequest, res: Response) => {
   try {
     const { vehicleId, from, to, page='1', limit='20' } = req.query as any;
@@ -139,6 +219,32 @@ router.get('/fuel-logs', async (req: AuthRequest, res: Response) => {
         include: { vehicle: { select: { plateNumber: true } }, cashier: { select: { name: true } } } }),
       prisma.fuelLog.count({ where }) ]);
     return res.json({ fuelLogs, total });
+  } catch (e: any) { return res.status(500).json({ error: e.message }); }
+});
+
+// Delete single fuel log
+router.delete('/fuel-logs/:id', async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const log = await prisma.fuelLog.findUnique({ where: { id } });
+    if (!log) return res.status(404).json({ error: 'Fuel log not found' });
+
+    await prisma.fuelLog.delete({ where: { id } });
+    await logAudit(req, 'delete', 'fuel_log', id, { vehicleId: log.vehicleId, totalCost: log.totalCost });
+    return res.json({ message: 'Fuel log deleted successfully' });
+  } catch (e: any) { return res.status(500).json({ error: e.message }); }
+});
+
+// Clear all fuel logs
+router.delete('/fuel-logs', async (req: AuthRequest, res: Response) => {
+  try {
+    const { vehicleId, cashierId } = req.query as any;
+    const where: any = {};
+    if (vehicleId) where.vehicleId = vehicleId;
+    if (cashierId) where.cashierId = cashierId;
+    const result = await prisma.fuelLog.deleteMany({ where });
+    await logAudit(req, 'clear', 'fuel_log', undefined, { count: result.count });
+    return res.json({ message: 'Fuel logs cleared successfully', count: result.count });
   } catch (e: any) { return res.status(500).json({ error: e.message }); }
 });
 
@@ -517,6 +623,98 @@ router.get('/:id/sessions', async (req: AuthRequest, res: Response) => {
       include: { cashier: { select: { name: true } } }
     });
     return res.json({ sessions });
+  } catch (e: any) { return res.status(500).json({ error: e.message }); }
+});
+
+// Delete single session
+router.delete('/sessions/:sessionId', async (req: AuthRequest, res: Response) => {
+  try {
+    const session = await prisma.cashierSession.findUnique({ where: { id: req.params.sessionId } });
+    if (!session) return res.status(404).json({ error: 'Session not found' });
+
+    await prisma.cashierSession.delete({ where: { id: req.params.sessionId } });
+    await logAudit(req, 'delete', 'cashier_session', req.params.sessionId, { cashierId: session.cashierId, date: session.sessionDate });
+    return res.json({ message: 'Session deleted successfully' });
+  } catch (e: any) { return res.status(500).json({ error: e.message }); }
+});
+
+// Clear all sessions
+router.delete('/sessions', async (req: AuthRequest, res: Response) => {
+  try {
+    const { cashierId } = req.query as any;
+    const where = cashierId ? { cashierId } : {};
+    const result = await prisma.cashierSession.deleteMany({ where });
+    await logAudit(req, 'clear', 'cashier_session', cashierId, { count: result.count });
+    return res.json({ message: 'Sessions cleared successfully', count: result.count });
+  } catch (e: any) { return res.status(500).json({ error: e.message }); }
+});
+
+// Clear all transactions and sessions for a specific cashier and reset balance to float
+router.post('/:id/clear', async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const cashier = await prisma.cashier.findUnique({ where: { id } });
+    if (!cashier) return res.status(404).json({ error: 'Cashier not found' });
+
+    await prisma.cashTransaction.deleteMany({ where: { cashierId: id } });
+    await prisma.cashierSession.deleteMany({ where: { cashierId: id } });
+    await prisma.cashAllocation.deleteMany({ where: { cashierId: id } });
+    await prisma.driverAdvance.updateMany({ where: { cashierId: id }, data: { cashierId: null } });
+    await prisma.fuelLog.updateMany({ where: { cashierId: id }, data: { cashierId: null } });
+    await prisma.rentalPayment.updateMany({ where: { cashierId: id }, data: { cashierId: null } });
+
+    const updated = await prisma.cashier.update({
+      where: { id },
+      data: { currentBalance: cashier.floatAmount || 0 }
+    });
+
+    await logAudit(req, 'clear_data', 'cashier', id, { cashierName: cashier.name, resetBalance: updated.currentBalance });
+    return res.json({ message: 'Cashier data cleared and balance reset successfully', cashier: updated });
+  } catch (e: any) { return res.status(500).json({ error: e.message }); }
+});
+
+router.delete('/:id/clear', async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const cashier = await prisma.cashier.findUnique({ where: { id } });
+    if (!cashier) return res.status(404).json({ error: 'Cashier not found' });
+
+    await prisma.cashTransaction.deleteMany({ where: { cashierId: id } });
+    await prisma.cashierSession.deleteMany({ where: { cashierId: id } });
+    await prisma.cashAllocation.deleteMany({ where: { cashierId: id } });
+    await prisma.driverAdvance.updateMany({ where: { cashierId: id }, data: { cashierId: null } });
+    await prisma.fuelLog.updateMany({ where: { cashierId: id }, data: { cashierId: null } });
+    await prisma.rentalPayment.updateMany({ where: { cashierId: id }, data: { cashierId: null } });
+
+    const updated = await prisma.cashier.update({
+      where: { id },
+      data: { currentBalance: cashier.floatAmount || 0 }
+    });
+
+    await logAudit(req, 'clear_data', 'cashier', id, { cashierName: cashier.name, resetBalance: updated.currentBalance });
+    return res.json({ message: 'Cashier data cleared and balance reset successfully', cashier: updated });
+  } catch (e: any) { return res.status(500).json({ error: e.message }); }
+});
+
+// Delete a cashier account permanently
+router.delete('/:id', async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const cashier = await prisma.cashier.findUnique({ where: { id } });
+    if (!cashier) return res.status(404).json({ error: 'Cashier not found' });
+
+    await prisma.cashTransaction.deleteMany({ where: { cashierId: id } });
+    await prisma.cashierSession.deleteMany({ where: { cashierId: id } });
+    await prisma.cashAllocation.deleteMany({ where: { cashierId: id } });
+    await prisma.cashTransfer.deleteMany({ where: { OR: [{ fromCashierId: id }, { toCashierId: id }] } });
+    await prisma.driverAdvance.updateMany({ where: { cashierId: id }, data: { cashierId: null } });
+    await prisma.fuelLog.updateMany({ where: { cashierId: id }, data: { cashierId: null } });
+    await prisma.rentalPayment.updateMany({ where: { cashierId: id }, data: { cashierId: null } });
+
+    await prisma.cashier.delete({ where: { id } });
+
+    await logAudit(req, 'delete', 'cashier', id, { name: cashier.name });
+    return res.json({ message: 'Cashier deleted successfully' });
   } catch (e: any) { return res.status(500).json({ error: e.message }); }
 });
 
