@@ -4,6 +4,7 @@ import prisma from '../utils/prisma';
 import { sendNotification } from '../utils/telegram';
 import { postJournalEntry } from '../utils/auto-journal';
 import { createAlert } from '../utils/alert-engine';
+import { generateTripNumber } from '../utils/sequence-generator';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
@@ -309,9 +310,8 @@ router.post('/', async (req: AuthRequest, res: Response) => {
       return res.status(400).json({ error: `Cannot assign trip: vehicle ${checkVehicle.plateNumber} is compliance-locked (${checkVehicle.lockReason}).` });
     }
 
-    const count = await prisma.trip.count();
-    const tripNumber = 'TRP-' + new Date().getFullYear() + '-' + String(count+1).padStart(6,'0');
     const trip = await prisma.$transaction(async (tx: any) => {
+      const tripNumber = await generateTripNumber(tx);
       const t = await tx.trip.create({ data: {
         tripNumber, orderId: orderId||null, vehicleId, driverId, helperId: helperId||null,
         customerId: customerId||null, orderType: orderType||'cement',

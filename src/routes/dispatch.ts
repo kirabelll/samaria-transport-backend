@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import prisma from '../utils/prisma';
+import { generateTripNumber } from '../utils/sequence-generator';
 const router = Router();
 router.use(authenticate);
 
@@ -124,8 +125,7 @@ router.post('/quick-assign', async (req: AuthRequest, res: Response) => {
     const { vehicleId, driverId, orderId, pickupLocation, deliveryLocation,
       plannedQuantityTons, ratePerTon, orderType, tripDate, customerId } = req.body;
     if (!vehicleId || !driverId) return res.status(400).json({ error: 'vehicleId, driverId required' });
-    const count = await prisma.trip.count();
-    const tripNumber = 'TRP-' + new Date().getFullYear() + '-' + String(count + 1).padStart(6, '0');
+    const tripNumber = await generateTripNumber();
     const trip = await prisma.trip.create({ data: {
       tripNumber, vehicleId, driverId,
       orderId: orderId || null, customerId: customerId || null,

@@ -1,4 +1,5 @@
 import prisma from './prisma';
+import { generateJournalEntryNumber } from './sequence-generator';
 
 /**
  * Automatically post a double-entry journal entry based on AccountingConfig mappings.
@@ -41,8 +42,7 @@ export async function postJournalEntry(params: {
   if (existing) return existing;
 
   // Generate entry number
-  const count = await prisma.journalEntry.count();
-  const entryNumber = 'JE-' + new Date().getFullYear() + '-' + String(count + 1).padStart(6, '0');
+  const entryNumber = await generateJournalEntryNumber();
 
   // Create journal entry with lines and update balances atomically
   const entry = await prisma.$transaction(async (tx: any) => {
@@ -107,8 +107,7 @@ export async function reverseJournalEntry(sourceType: string, sourceId: string, 
   });
   if (!original) return null;
 
-  const count = await prisma.journalEntry.count();
-  const entryNumber = 'JE-' + new Date().getFullYear() + '-' + String(count + 1).padStart(6, '0');
+  const entryNumber = await generateJournalEntryNumber();
 
   const entry = await prisma.$transaction(async (tx: any) => {
     // Mark original as reversed

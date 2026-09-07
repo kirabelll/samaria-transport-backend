@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import prisma from '../utils/prisma';
+import { generateJournalEntryNumber } from '../utils/sequence-generator';
 const router = Router();
 router.use(authenticate);
 
@@ -117,8 +118,7 @@ router.post('/journal-entries', async (req: AuthRequest, res: Response) => {
     }
 
     // Generate entry number
-    const count = await prisma.journalEntry.count();
-    const entryNumber = 'JE-' + new Date().getFullYear() + '-' + String(count + 1).padStart(6, '0');
+    const entryNumber = await generateJournalEntryNumber();
 
     const entry = await prisma.journalEntry.create({ data: {
       entryNumber, date: date ? new Date(date) : new Date(),

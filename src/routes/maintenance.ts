@@ -3,6 +3,7 @@ import { authenticate, AuthRequest } from '../middleware/auth';
 import prisma from '../utils/prisma';
 import { sendNotification } from '../utils/telegram';
 import { postJournalEntry } from '../utils/auto-journal';
+import { generateWorkOrderNumber } from '../utils/sequence-generator';
 const router = Router();
 router.use(authenticate);
 
@@ -91,9 +92,8 @@ router.post('/work-orders', async (req: AuthRequest, res: Response) => {
   try {
     const { vehicleId, type, breakdownReportId, garageId, garageType, technicianId, description, priority } = req.body;
     if (!vehicleId || !description) return res.status(400).json({ error: 'vehicleId, description required' });
-    const count = await prisma.workOrder.count();
-    const workOrderNumber = 'WO-' + new Date().getFullYear() + '-' + String(count+1).padStart(5,'0');
     const wo = await prisma.$transaction(async (tx: any) => {
+      const workOrderNumber = await generateWorkOrderNumber(tx);
       const w = await tx.workOrder.create({ data: {
         workOrderNumber, vehicleId, type: type||'corrective', description,
         priority: priority||'normal', garageId: garageId||null,

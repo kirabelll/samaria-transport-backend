@@ -3,6 +3,7 @@ import { authenticate, AuthRequest } from '../middleware/auth';
 import prisma from '../utils/prisma';
 import { executeApproval } from '../utils/approval';
 import { sendNotification } from '../utils/telegram';
+import { generateApprovalRequestNumber } from '../utils/sequence-generator';
 const router = Router();
 router.use(authenticate);
 
@@ -48,10 +49,7 @@ router.post('/', async (req: AuthRequest, res: Response) => {
     const { type, entityType, entityId, description, amount, currentData, proposedData, priority } = req.body;
     if (!type || !entityType || !entityId || !description)
       return res.status(400).json({ error: 'type, entityType, entityId, description required' });
-
-    const year = new Date().getFullYear();
-    const count = await prisma.approvalRequest.count();
-    const requestNumber = `APR-${year}-${String(count + 1).padStart(5, '0')}`;
+    const requestNumber = await generateApprovalRequestNumber();
 
     const request = await prisma.approvalRequest.create({
       data: {

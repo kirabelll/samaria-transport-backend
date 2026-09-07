@@ -3,6 +3,7 @@ import { authenticate, AuthRequest } from '../middleware/auth';
 import prisma from '../utils/prisma';
 import { postJournalEntry } from '../utils/auto-journal';
 import { sendNotification } from '../utils/telegram';
+import { generateCashTransferNumber } from '../utils/sequence-generator';
 const router = Router();
 router.use(authenticate);
 
@@ -61,9 +62,7 @@ router.post('/', async (req: AuthRequest, res: Response) => {
     if (!toCashier) return res.status(404).json({ error: 'Destination cashier not found' });
 
     // Generate transfer number
-    const year = new Date().getFullYear();
-    const count = await prisma.cashTransfer.count();
-    const transferNumber = `CT-${year}-${String(count + 1).padStart(5, '0')}`;
+    const transferNumber = await generateCashTransferNumber();
 
     const transfer = await prisma.cashTransfer.create({
       data: {

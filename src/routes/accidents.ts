@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import prisma from '../utils/prisma';
 import { sendNotification } from '../utils/telegram';
+import { generateAccidentNumber } from '../utils/sequence-generator';
 
 const router = Router();
 router.use(authenticate);
@@ -43,8 +44,7 @@ router.post('/', async (req: AuthRequest, res: Response) => {
     if (!accidentDate || !location || !vehicleId || !description)
       return res.status(400).json({ error: 'accidentDate, location, vehicleId, description required' });
 
-    const count = await prisma.accidentRecord.count();
-    const accidentNumber = 'ACC-' + new Date().getFullYear() + '-' + String(count + 1).padStart(5, '0');
+    const accidentNumber = await generateAccidentNumber();
 
     const record = await prisma.accidentRecord.create({
       data: {

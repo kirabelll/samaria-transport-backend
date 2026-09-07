@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import prisma from '../utils/prisma';
+import { generatePurchaseRequestNumber, generatePurchaseOrderNumber, generateGrnNumber, generatePaymentRequestNumber } from '../utils/sequence-generator';
 const router = Router();
 router.use(authenticate);
 
@@ -111,8 +112,7 @@ router.post('/purchase-requests', async (req: AuthRequest, res: Response) => {
   try {
     const { urgency, notes, lines, department, category, requiredDate, isEmergency, emergencyReason, attachment } = req.body;
     if (!lines || !lines.length) return res.status(400).json({ error: 'At least one line item required' });
-    const count = await prisma.purchaseRequest.count();
-    const requestNumber = 'PR-' + new Date().getFullYear() + '-' + String(count+1).padStart(5,'0');
+    const requestNumber = await generatePurchaseRequestNumber();
     const pr = await prisma.purchaseRequest.create({ data: {
       requestNumber, urgency: urgency||'normal', notes, requestedById: req.user?.id, status: 'pending',
       department, category, attachment,
@@ -175,8 +175,7 @@ router.put('/quotations/:id/select', async (req: AuthRequest, res: Response) => 
     await prisma.$transaction(async (tx: any) => {
       await tx.quotation.updateMany({ where: { purchaseRequestId: q.purchaseRequestId }, data: { status: 'rejected' } });
       await tx.quotation.update({ where: { id: req.params.id }, data: { status: 'selected' } });
-      const count = await tx.purchaseOrder.count();
-      const poNumber = 'PO-' + new Date().getFullYear() + '-' + String(count+1).padStart(5,'0');
+      const poNumber = await generatePurchaseOrderNumber(tx);
       await tx.purchaseOrder.create({ data: { poNumber, purchaseRequestId: q.purchaseRequestId,
         supplierId: q.supplierId, quantity: totalQty, unitPrice: q.unitPrice,
         totalAmount: q.totalPrice, status: 'pending',
@@ -241,9 +240,7 @@ async function createGRN(req: AuthRequest, poId: string, data: {
   }
 
   // GRN number
-  const year = new Date().getFullYear();
-  const grnCount = await prisma.goodsReceiptNote.count({ where: { grnNumber: { startsWith: `GRN-${year}-` } } });
-  const grnNumber = `GRN-${year}-${String(grnCount + 1).padStart(6, '0')}`;
+  const grnNumber = await generateGrnNumber();
 
   return await prisma.$transaction(async (tx: any) => {
     // 1) Create GRN
@@ -460,9 +457,7 @@ router.post('/purchase-orders/:id/payment-request', async (req: AuthRequest, res
     }
 
     // Create payment request
-    const year = new Date().getFullYear();
-    const count = await prisma.paymentRequest.count();
-    const requestNumber = `PAY-${year}-${String(count + 1).padStart(6, '0')}`;
+    const requestNumber = await generatePaymentRequestNumber();
 
     const payReq = await prisma.paymentRequest.create({ data: {
       requestNumber,

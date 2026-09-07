@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import prisma from '../utils/prisma';
 import { sendNotification } from '../utils/telegram';
+import { generateRevenueShareContractNumber, generateRevenueShareSettlementNumber } from '../utils/sequence-generator';
 
 const router = Router();
 router.use(authenticate);
@@ -43,8 +44,7 @@ router.post('/contracts', async (req: AuthRequest, res: Response) => {
     if (!powerVehiclePlate || ownerSharePercent === undefined || companySharePercent === undefined)
       return res.status(400).json({ error: 'powerVehiclePlate, ownerSharePercent, companySharePercent required' });
 
-    const count = await prisma.revenueShareContract.count();
-    const contractNumber = 'RSC-' + new Date().getFullYear() + '-' + String(count + 1).padStart(4, '0');
+    const contractNumber = await generateRevenueShareContractNumber();
 
     const contract = await prisma.revenueShareContract.create({
       data: {
@@ -135,8 +135,7 @@ router.post('/settlements/generate', async (req: AuthRequest, res: Response) => 
     const ownerPayable = netIncome * (contract.ownerSharePercent / 100);
     const companyShare = netIncome * (contract.companySharePercent / 100);
 
-    const count = await prisma.revenueShareSettlement.count();
-    const settlementNumber = 'RSS-' + y + '-' + String(m).padStart(2, '0') + '-' + String(count + 1).padStart(4, '0');
+    const settlementNumber = await generateRevenueShareSettlementNumber(y, m);
 
     const settlement = await prisma.revenueShareSettlement.upsert({
       where: { contractId_month_year: { contractId, month: m, year: y } },

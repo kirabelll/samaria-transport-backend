@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import prisma from '../utils/prisma';
+import { generateRentalEmpNumber } from '../utils/sequence-generator';
 const router = Router();
 router.use(authenticate);
 
@@ -153,8 +154,7 @@ router.get('/vehicles/:id/ensure-driver', async (req: AuthRequest, res: Response
 
     // Create new mirror Employee
     const parts = driverName.split(' ');
-    const empCount = await prisma.employee.count();
-    const empNumber = 'RNT-' + String(empCount + 1).padStart(5, '0');
+    const empNumber = await generateRentalEmpNumber();
     emp = await prisma.employee.create({
       data: {
         empNumber,

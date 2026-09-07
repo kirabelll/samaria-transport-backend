@@ -1,4 +1,5 @@
 import prisma from './prisma';
+import { generateApprovalRequestNumber } from './sequence-generator';
 
 /**
  * Check if an action requires approval based on rules
@@ -26,9 +27,7 @@ export async function createApprovalRequest(data: {
   proposedData?: any;
   priority?: string;
 }): Promise<any> {
-  const year = new Date().getFullYear();
-  const count = await prisma.approvalRequest.count();
-  const requestNumber = `APR-${year}-${String(count + 1).padStart(5, '0')}`;
+  const requestNumber = await generateApprovalRequestNumber();
 
   return prisma.approvalRequest.create({
     data: {

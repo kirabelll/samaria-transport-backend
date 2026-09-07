@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import prisma from '../utils/prisma';
 import bcrypt from 'bcryptjs';
+import { generateOrderNumber } from '../utils/sequence-generator';
 const router = Router();
 router.use(authenticate);
 
@@ -59,8 +60,7 @@ router.post('/orders', async (req: AuthRequest, res: Response) => {
       }
     }
 
-    const count = await prisma.customerOrder.count();
-    const orderNumber = 'ORD-' + new Date().getFullYear() + '-' + String(count+1).padStart(6,'0');
+    const orderNumber = await generateOrderNumber();
     const route = `${pickupLocation} -> ${deliveryLocation}`;
     const order = await prisma.customerOrder.create({ data: {
       orderNumber, customerId, orderType, quantity: Number(quantity), materialType,

@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import prisma from '../utils/prisma';
+import { generateOrderNumber } from '../utils/sequence-generator';
 const router = Router();
 router.use(authenticate);
 
@@ -59,8 +60,7 @@ router.post('/orders', async (req: AuthRequest, res: Response) => {
       requiredDeliveryDate, notes } = req.body;
     if (!orderType || !quantity || !pickupLocation || !deliveryLocation)
       return res.status(400).json({ error: 'orderType, quantity, pickupLocation, deliveryLocation required' });
-    const count = await prisma.customerOrder.count();
-    const orderNumber = 'ORD-' + new Date().getFullYear() + '-' + String(count + 1).padStart(6, '0');
+    const orderNumber = await generateOrderNumber();
     const order = await prisma.customerOrder.create({ data: {
       orderNumber, customerId: user.customerId, orderType, quantity: Number(quantity),
       materialType, pickupLocation, deliveryLocation, pickupContact, pickupPhone,
