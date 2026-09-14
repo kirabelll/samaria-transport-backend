@@ -266,6 +266,7 @@ router.get('/order-fulfillment', async (req: AuthRequest, res: Response) => {
     if (from || to) { where.orderDate = {}; if (from) where.orderDate.gte = new Date(from); if (to) where.orderDate.lte = new Date(to); }
     const orders = await prisma.customerOrder.findMany({
       where, select: { id: true, orderNumber: true, status: true, quantity: true, totalDelivered: true, totalTrips: true,
+        trips: { select: { deliveredQuantityTons: true, status: true } },
         customer: { select: { companyName: true } } },
     });
     const byStatus: any = {};
@@ -273,14 +274,19 @@ router.get('/order-fulfillment', async (req: AuthRequest, res: Response) => {
       if (!byStatus[o.status]) byStatus[o.status] = { status: o.status, count: 0 };
       byStatus[o.status].count++;
     }
-    const fulfillment = orders.map(o => ({
-      orderNumber: o.orderNumber, customer: (o as any).customer?.companyName,
-      status: o.status, ordered: o.quantity, delivered: o.totalDelivered || 0,
-      trips: o.totalTrips || 0,
-      fulfillmentPct: o.quantity > 0 ? Number((((o.totalDelivered || 0) / o.quantity) * 100).toFixed(1)) : 0,
-    }));
-    const fullyDelivered = orders.filter(o => (o.totalDelivered || 0) >= o.quantity && o.quantity > 0).length;
-    const inProgress = orders.filter(o => (o.totalDelivered || 0) > 0 && (o.totalDelivered || 0) < o.quantity).length;
+    const fulfillment = orders.map(o => {
+      const delivered = o.trips && o.trips.length > 0
+        ? o.trips.filter((t: any) => t.status !== 'cancelled').reduce((s: number, t: any) => s + (t.deliveredQuantityTons || 0), 0)
+        : (o.totalDelivered || 0);
+      return {
+        orderNumber: o.orderNumber, customer: (o as any).customer?.companyName,
+        status: o.status, ordered: o.quantity, delivered,
+        trips: o.trips ? o.trips.filter((t: any) => t.status !== 'cancelled').length : (o.totalTrips || 0),
+        fulfillmentPct: o.quantity > 0 ? Number(((delivered / o.quantity) * 100).toFixed(1)) : 0,
+      };
+    });
+    const fullyDelivered = fulfillment.filter(o => o.delivered >= o.ordered && o.ordered > 0).length;
+    const inProgress = fulfillment.filter(o => o.delivered > 0 && o.delivered < o.ordered).length;
     const summary = {
       totalOrders: orders.length,
       fullyDelivered,

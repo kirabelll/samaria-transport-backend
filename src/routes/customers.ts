@@ -17,9 +17,28 @@ router.get('/orders', async (req: AuthRequest, res: Response) => {
     const skip = (Number(page)-1)*Number(limit);
     const [orders, total] = await Promise.all([
       prisma.customerOrder.findMany({ where, skip, take: Number(limit), orderBy: { createdAt: 'desc' },
-        include: { customer: { select: { companyName: true, contactName: true } } } }),
+        include: {
+          customer: { select: { companyName: true, contactName: true } },
+          trips: { select: { id: true, deliveredQuantityTons: true, status: true } },
+        } }),
       prisma.customerOrder.count({ where }) ]);
-    return res.json({ orders, total });
+
+    const mappedOrders = orders.map((o: any) => {
+      const tripsDelivered = o.trips && o.trips.length > 0
+        ? o.trips.filter((t: any) => t.status !== 'cancelled').reduce((s: number, t: any) => s + (t.deliveredQuantityTons || 0), 0)
+        : (o.totalDelivered || 0);
+      const totalDelivered = Number(tripsDelivered.toFixed(2));
+      const remainingQty = Math.max(0, Number(((o.quantity || 0) - totalDelivered).toFixed(2)));
+      const totalTrips = o.trips ? o.trips.filter((t: any) => t.status !== 'cancelled').length : (o.totalTrips || 0);
+      return {
+        ...o,
+        totalDelivered,
+        remainingQty,
+        totalTrips,
+      };
+    });
+
+    return res.json({ orders: mappedOrders, total });
   } catch (e: any) { return res.status(500).json({ error: e.message }); }
 });
 
@@ -88,8 +107,14 @@ router.get('/orders/:id', async (req: AuthRequest, res: Response) => {
       include: { customer: true, trips: { include: { vehicle: { select: { plateNumber: true } },
         driver: { select: { firstName: true, lastName: true } },
         statusHistory: { orderBy: { changedAt: 'desc' } } } },
-        messages: { orderBy: { createdAt: 'asc' } }, statusHistory: { orderBy: { changedAt: 'desc' } }, invoice: true } });
+        messages: { orderBy: { createdAt: 'asc' } }, statusHistory: { orderBy: { changedAt: 'desc' } }, invoice: true } }) as any;
     if (!order) return res.status(404).json({ error: 'Not found' });
+    if (order.trips && order.trips.length > 0) {
+      const tripsDelivered = order.trips.filter((t: any) => t.status !== 'cancelled').reduce((s: number, t: any) => s + (t.deliveredQuantityTons || 0), 0);
+      order.totalDelivered = Number(tripsDelivered.toFixed(2));
+      order.remainingQty = Math.max(0, Number(((order.quantity || 0) - order.totalDelivered).toFixed(2)));
+      order.totalTrips = order.trips.filter((t: any) => t.status !== 'cancelled').length;
+    }
     return res.json({ order });
   } catch (e: any) { return res.status(500).json({ error: e.message }); }
 });

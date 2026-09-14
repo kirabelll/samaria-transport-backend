@@ -346,6 +346,20 @@ router.put('/:id', async (req: AuthRequest, res: Response) => {
       if (req.body[f]) data[f] = new Date(req.body[f]);
     if (req.body.tripDate) data.tripDate = new Date(req.body.tripDate);
     const trip = await prisma.trip.update({ where: { id: req.params.id }, data });
+    if (trip.orderId) {
+      const completedTrips = await prisma.trip.findMany({
+        where: { orderId: trip.orderId, status: { not: 'cancelled' } },
+        select: { deliveredQuantityTons: true, status: true },
+      });
+      const totalDelivered = Number(completedTrips.reduce((s: number, t: any) => s + (t.deliveredQuantityTons || 0), 0).toFixed(2));
+      const order = await prisma.customerOrder.findUnique({ where: { id: trip.orderId } }) as any;
+      const remainingQty = Math.max(0, Number(((order?.quantity || 0) - totalDelivered).toFixed(2)));
+      const allTrips = completedTrips.length;
+      const allCompleted = completedTrips.filter((t: any) => t.status === 'completed').length;
+      const orderData: any = { totalDelivered, totalTrips: allTrips, remainingQty };
+      if (allCompleted >= allTrips && allTrips > 0) orderData.status = 'delivered';
+      await prisma.customerOrder.update({ where: { id: trip.orderId }, data: orderData });
+    }
     return res.json({ trip });
   } catch (e: any) { return res.status(500).json({ error: e.message }); }
 });
@@ -517,15 +531,15 @@ router.put('/:id/close', async (req: AuthRequest, res: Response) => {
           where: { orderId: existing.orderId, status: 'completed' },
           select: { deliveredQuantityTons: true },
         });
-        const totalDelivered = completedTrips.reduce((s: number, t: any) => s + (t.deliveredQuantityTons || 0), 0) + delivered;
+        const totalDelivered = Number(completedTrips.reduce((s: number, t: any) => s + (t.deliveredQuantityTons || 0), 0).toFixed(2));
         const order = await tx.customerOrder.findUnique({ where: { id: existing.orderId } }) as any;
-        const remainingQty = Math.max(0, (order?.quantity || 0) - totalDelivered);
+        const remainingQty = Math.max(0, Number(((order?.quantity || 0) - totalDelivered).toFixed(2)));
         const allTrips = await tx.trip.count({ where: { orderId: existing.orderId, status: { not: 'cancelled' } } });
-        const allCompleted = completedTrips.length + 1;
+        const allCompleted = completedTrips.length;
         const orderData: any = {
           totalDelivered, totalTrips: allTrips, remainingQty,
         };
-        if (allCompleted >= allTrips) orderData.status = 'delivered';
+        if (allCompleted >= allTrips && allTrips > 0) orderData.status = 'delivered';
         await tx.customerOrder.update({ where: { id: existing.orderId }, data: orderData });
       }
       return t;

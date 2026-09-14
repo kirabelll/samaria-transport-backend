@@ -281,7 +281,7 @@ async function createGRN(req: AuthRequest, poId: string, data: {
     }
 
     // 4) Update inventory + transaction lines (proportional to this GRN's share of total)
-    const usableQty = qtyThis - (Number(data.quantityRejected) || 0); // rejected goods don't enter stock
+    const usableQty = qtyThis - (Number(data.quantityRejected) || 0); // rejected goods don't enter stock 
     if (usableQty > 0 && po.purchaseRequest?.lines) {
       const ratio = usableQty / po.quantity;
       for (const line of po.purchaseRequest.lines) {
