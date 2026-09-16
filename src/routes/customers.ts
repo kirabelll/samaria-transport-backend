@@ -9,19 +9,41 @@ router.use(authenticate);
 // Orders routes (before /:id to avoid conflict)
 router.get('/orders', async (req: AuthRequest, res: Response) => {
   try {
-    const { status, orderType, customerId, page='1', limit='20' } = req.query as any;
+    const { status, orderType, customerId, page='1', limit='20', search } = req.query as any;
     const where: any = {};
     if (status) where.status = status;
     if (orderType) where.orderType = orderType;
     if (customerId) where.customerId = customerId;
-    const skip = (Number(page)-1)*Number(limit);
+    if (search && typeof search === 'string' && search.trim()) {
+      const s = search.trim();
+      where.OR = [
+        { orderNumber: { contains: s, mode: 'insensitive' } },
+        { poNumber: { contains: s, mode: 'insensitive' } },
+        { pickupLocation: { contains: s, mode: 'insensitive' } },
+        { deliveryLocation: { contains: s, mode: 'insensitive' } },
+        { itemProduct: { contains: s, mode: 'insensitive' } },
+        { materialType: { contains: s, mode: 'insensitive' } },
+        { customer: { companyName: { contains: s, mode: 'insensitive' } } },
+      ];
+    }
+
+    const isAll = limit === 'all' || Number(limit) <= 0;
+    const limitNum = isAll ? undefined : Math.max(1, Number(limit) || 20);
+    const skip = isAll ? undefined : (Math.max(1, Number(page) || 1) - 1) * (limitNum || 20);
+
     const [orders, total] = await Promise.all([
-      prisma.customerOrder.findMany({ where, skip, take: Number(limit), orderBy: { createdAt: 'desc' },
+      prisma.customerOrder.findMany({
+        where,
+        skip,
+        take: limitNum,
+        orderBy: { createdAt: 'desc' },
         include: {
           customer: { select: { companyName: true, contactName: true } },
           trips: { select: { id: true, deliveredQuantityTons: true, status: true } },
-        } }),
-      prisma.customerOrder.count({ where }) ]);
+        },
+      }),
+      prisma.customerOrder.count({ where }),
+    ]);
 
     const mappedOrders = orders.map((o: any) => {
       const tripsDelivered = o.trips && o.trips.length > 0
