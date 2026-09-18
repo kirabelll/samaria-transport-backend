@@ -20,6 +20,582 @@ router.get('/stats', async (req: AuthRequest, res: Response) => {
   } catch (e: any) { return res.status(500).json({ error: e.message }); }
 });
 
+// GET /source-data - List candidate records to populate payment request based on selected paymentType
+router.get('/source-data', async (req: AuthRequest, res: Response) => {
+  try {
+    const type = String(req.query.type || '').trim().toLowerCase();
+    const q = String(req.query.search || req.query.q || '').trim().toLowerCase();
+    let results: any[] = [];
+
+    if (type === 'advance') {
+      // 1. Pending/Approved Driver Advances
+      const advances = await prisma.driverAdvance.findMany({
+        take: 25,
+        orderBy: { requestedAt: 'desc' },
+        include: {
+          driver: true,
+          trip: { include: { vehicle: true } },
+        },
+      });
+      advances.forEach(adv => {
+        const driverName = adv.driver ? `${adv.driver.firstName} ${adv.driver.lastName}`.trim() : 'Unknown Driver';
+        const plate = adv.trip?.vehicle?.plateNumber || '';
+        const tripNum = adv.trip?.tripNumber || '';
+        results.push({
+          id: `adv-${adv.id}`,
+          title: `Advance Req: ${driverName} (${adv.amount ? `ETB ${adv.amount.toLocaleString()}` : 'ETB 0'})`,
+          subtitle: `Status: ${adv.status} · ${tripNum ? `Trip ${tripNum}` : 'General'}${plate ? ` · Plate ${plate}` : ''}${adv.reason ? ` · ${adv.reason}` : ''}`,
+          badge: `Advance (${adv.status})`,
+          referenceType: 'trip',
+          referenceId: tripNum || `ADV-${adv.id.slice(0, 8).toUpperCase()}`,
+          payee: driverName,
+          amount: adv.amount || 0,
+          department: 'fleet',
+          description: `Driver advance for ${driverName}${tripNum ? ` - Trip ${tripNum}` : ''}${adv.reason ? ` (${adv.reason})` : ''}`,
+          vehicleId: adv.trip?.vehicleId || null,
+          payeeBank: adv.driver?.bankAccount ? 'CBE' : null,
+          payeeAccountHolder: driverName,
+          payeeAccountNumber: adv.driver?.bankAccount || null,
+          paymentMethod: adv.driver?.bankAccount ? 'bank_transfer' : 'cash',
+        });
+      });
+
+      // 2. Active Trips needing advance
+      const trips = await prisma.trip.findMany({
+        where: {
+          status: { in: ['planned', 'dispatched', 'loading', 'in_transit', 'delivering'] },
+        },
+        take: 25,
+        orderBy: { createdAt: 'desc' },
+        include: { driver: true, vehicle: true },
+      });
+      trips.forEach(t => {
+        const driverName = t.driver ? `${t.driver.firstName} ${t.driver.lastName}`.trim() : 'Assigned Driver';
+        results.push({
+          id: `trip-adv-${t.id}`,
+          title: `Trip ${t.tripNumber}: ${t.pickupLocation} → ${t.deliveryLocation}`,
+          subtitle: `Driver: ${driverName} · Vehicle: ${t.vehicle?.plateNumber || '-'} · Advance Given: ETB ${t.driverAdvanceGiven || 0}`,
+          badge: `Trip (${t.status})`,
+          referenceType: 'trip',
+          referenceId: t.tripNumber,
+          payee: driverName,
+          amount: t.driverAdvanceGiven || 2500,
+          department: 'fleet',
+          description: `Trip advance for driver ${driverName} on Trip ${t.tripNumber}`,
+          vehicleId: t.vehicleId || null,
+          payeeBank: t.driver?.bankAccount ? 'CBE' : null,
+          payeeAccountHolder: driverName,
+          payeeAccountNumber: t.driver?.bankAccount || null,
+          paymentMethod: t.driver?.bankAccount ? 'bank_transfer' : 'cash',
+        });
+      });
+
+      // 3. Active Drivers
+      const drivers = await prisma.employee.findMany({
+        where: { role: 'driver', status: 'active' },
+        take: 20,
+        orderBy: { firstName: 'asc' },
+      });
+      drivers.forEach(d => {
+        const driverName = `${d.firstName} ${d.lastName}`.trim();
+        results.push({
+          id: `emp-driver-${d.id}`,
+          title: `Driver: ${driverName} (${d.empNumber})`,
+          subtitle: `Phone: ${d.phone || '-'} · Dept: ${d.department || 'fleet'} · Bank: ${d.bankAccount || 'None'}`,
+          badge: 'Driver',
+          referenceType: 'trip',
+          referenceId: `DRV-${d.empNumber}`,
+          payee: driverName,
+          amount: 2000,
+          department: 'fleet',
+          description: `Advance payment for driver ${driverName} (${d.empNumber})`,
+          vehicleId: null,
+          payeeBank: d.bankAccount ? 'CBE' : null,
+          payeeAccountHolder: driverName,
+          payeeAccountNumber: d.bankAccount || null,
+          paymentMethod: d.bankAccount ? 'bank_transfer' : 'cash',
+        });
+      });
+
+    } else if (type === 'fuel') {
+      // 1. Recent Fuel Logs
+      const fuelLogs = await prisma.fuelLog.findMany({
+        take: 30,
+        orderBy: { date: 'desc' },
+        include: { vehicle: true, driver: true, trip: true },
+      });
+      fuelLogs.forEach(fl => {
+        const plate = fl.vehicle?.plateNumber || 'Vehicle';
+        const driverName = fl.driver ? `${fl.driver.firstName} ${fl.driver.lastName}`.trim() : '';
+        const station = fl.fuelStation || 'Fuel Station';
+        results.push({
+          id: `fuel-${fl.id}`,
+          title: `Fuel: ${plate} · ${fl.liters || 0}L at ${station}`,
+          subtitle: `Cost: ETB ${fl.totalCost?.toLocaleString() || 0} (${fl.costPerLiter || 0}/L)${driverName ? ` · Driver: ${driverName}` : ''}${fl.trip?.tripNumber ? ` · Trip ${fl.trip.tripNumber}` : ''}`,
+          badge: 'Fuel Log',
+          referenceType: 'trip',
+          referenceId: fl.trip?.tripNumber || `FUEL-${fl.id.slice(0, 8).toUpperCase()}`,
+          payee: station,
+          amount: fl.totalCost || 0,
+          department: 'fleet',
+          description: `Fuel purchase for vehicle ${plate} (${fl.liters || 0}L @ ETB ${fl.costPerLiter || 0} at ${station})`,
+          vehicleId: fl.vehicleId || null,
+          payeeBank: null,
+          payeeAccountHolder: station,
+          payeeAccountNumber: null,
+          paymentMethod: 'cash',
+        });
+      });
+
+      // 2. Active Trips for Fuel Coupon/Payment
+      const activeTrips = await prisma.trip.findMany({
+        where: { status: { in: ['planned', 'dispatched', 'loading', 'in_transit'] } },
+        take: 20,
+        orderBy: { createdAt: 'desc' },
+        include: { vehicle: true, driver: true },
+      });
+      activeTrips.forEach(t => {
+        const plate = t.vehicle?.plateNumber || '-';
+        results.push({
+          id: `trip-fuel-${t.id}`,
+          title: `Fuel for Trip ${t.tripNumber} (${plate})`,
+          subtitle: `${t.pickupLocation} → ${t.deliveryLocation} · Est. Fuel: ETB ${t.fuelCost || 0}`,
+          badge: `Trip (${t.status})`,
+          referenceType: 'trip',
+          referenceId: t.tripNumber,
+          payee: 'National Oil / Total Station',
+          amount: t.fuelCost || 5000,
+          department: 'fleet',
+          description: `Fuel disbursement for Trip ${t.tripNumber} (${plate})`,
+          vehicleId: t.vehicleId || null,
+          paymentMethod: 'cash',
+        });
+      });
+
+      // 3. Fuel Suppliers
+      const fuelSuppliers = await prisma.supplier.findMany({
+        where: { suppliedCategory: 'fuel', status: 'active' },
+        take: 15,
+      });
+      fuelSuppliers.forEach(s => {
+        results.push({
+          id: `supp-fuel-${s.id}`,
+          title: `Fuel Supplier: ${s.name}`,
+          subtitle: `Phone: ${s.phone || '-'} · Balance: ETB ${s.currentBalance || 0}`,
+          badge: 'Supplier',
+          referenceType: 'po',
+          referenceId: `SUPP-${s.id.slice(0, 6).toUpperCase()}`,
+          payee: s.name,
+          amount: s.currentBalance > 0 ? s.currentBalance : 10000,
+          department: 'fleet',
+          description: `Fuel replenishment / bulk payment to ${s.name}`,
+          vehicleId: null,
+          payeeAccountHolder: s.name,
+          paymentMethod: 'bank_transfer',
+        });
+      });
+
+    } else if (type === 'garage') {
+      // 1. Work Orders
+      const wos = await prisma.workOrder.findMany({
+        take: 35,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          vehicle: true,
+          garage: true,
+          technician: true,
+        },
+      });
+      wos.forEach(wo => {
+        const plate = wo.vehicle?.plateNumber || 'Vehicle';
+        const garageName = wo.garage?.name || (wo.garageType === 'internal' ? 'Internal Workshop' : 'External Garage');
+        const cost = wo.totalCost || ((wo.laborCost || 0) + (wo.partsCost || 0)) || 0;
+        results.push({
+          id: `wo-${wo.id}`,
+          title: `WO ${wo.workOrderNumber}: ${plate} (${garageName})`,
+          subtitle: `Status: ${wo.status} · Type: ${wo.type} · Est. Cost: ETB ${cost.toLocaleString()} · ${wo.description}`,
+          badge: `WO (${wo.status})`,
+          referenceType: 'work_order',
+          referenceId: wo.workOrderNumber,
+          payee: garageName,
+          amount: cost,
+          department: 'workshop',
+          description: `Garage repair payment for WO ${wo.workOrderNumber} (${plate}): ${wo.description}`,
+          vehicleId: wo.vehicleId || null,
+          payeeBank: null,
+          payeeAccountHolder: garageName,
+          payeeAccountNumber: null,
+          paymentMethod: 'cash',
+        });
+      });
+
+      // 2. Garages
+      const garages = await prisma.garage.findMany({ take: 20 });
+      garages.forEach(g => {
+        results.push({
+          id: `garage-${g.id}`,
+          title: `Garage: ${g.name}`,
+          subtitle: `Phone: ${g.phone || '-'} · Address: ${g.address || '-'}`,
+          badge: 'Garage',
+          referenceType: 'work_order',
+          referenceId: `GAR-${g.id.slice(0, 6).toUpperCase()}`,
+          payee: g.name,
+          amount: 5000,
+          department: 'workshop',
+          description: `Maintenance / repair services at ${g.name}`,
+          vehicleId: null,
+          payeeAccountHolder: g.name,
+          paymentMethod: 'bank_transfer',
+        });
+      });
+
+    } else if (type === 'spare_part') {
+      // 1. Spare Part Requests
+      const sprs = await prisma.sparePartRequest.findMany({
+        take: 30,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          workOrder: { include: { vehicle: true } },
+          trip: { include: { vehicle: true } },
+          inventory: true,
+        },
+      });
+      sprs.forEach(spr => {
+        const plate = spr.workOrder?.vehicle?.plateNumber || spr.trip?.vehicle?.plateNumber || '';
+        const woNum = spr.workOrder?.workOrderNumber || '';
+        results.push({
+          id: `spr-${spr.id}`,
+          title: `Spare Part: ${spr.partName} (${spr.quantityNeeded} pcs)`,
+          subtitle: `Status: ${spr.status} · Unit: ETB ${spr.unitCost || 0} · Total: ETB ${spr.totalCost || 0}${plate ? ` · Plate ${plate}` : ''}`,
+          badge: `Part Req (${spr.status})`,
+          referenceType: woNum ? 'work_order' : 'po',
+          referenceId: woNum || `SPR-${spr.id.slice(0, 8).toUpperCase()}`,
+          payee: 'Spare Parts Supplier',
+          amount: spr.totalCost || ((spr.unitCost || 0) * spr.quantityNeeded) || 0,
+          department: 'store',
+          description: `Purchase of ${spr.quantityNeeded}x ${spr.partName}${plate ? ` for vehicle ${plate}` : ''}${woNum ? ` (WO: ${woNum})` : ''}`,
+          vehicleId: spr.workOrder?.vehicleId || spr.trip?.vehicleId || null,
+          paymentMethod: 'cash',
+        });
+      });
+
+      // 2. Purchase Requests with category spare_parts
+      const prs = await prisma.purchaseRequest.findMany({
+        where: { category: { in: ['spare_parts', 'tyres', 'tools'] } },
+        take: 20,
+        orderBy: { createdAt: 'desc' },
+        include: { lines: true, purchaseOrder: true },
+      });
+      prs.forEach(pr => {
+        const lineCount = pr.lines?.length || 0;
+        const totalEst = pr.lines?.reduce((sum, l) => sum + ((l.estimatedCost || 0) * (l.quantityNeeded || 1)), 0) || 0;
+        results.push({
+          id: `pr-parts-${pr.id}`,
+          title: `PR ${pr.requestNumber}: ${pr.category} (${lineCount} items)`,
+          subtitle: `Status: ${pr.status} · Est. Total: ETB ${totalEst.toLocaleString()}${pr.purchaseOrder ? ` · PO ${pr.purchaseOrder.poNumber}` : ''}`,
+          badge: `PR (${pr.status})`,
+          referenceType: pr.purchaseOrder ? 'po' : 'po',
+          referenceId: pr.purchaseOrder?.poNumber || pr.requestNumber,
+          payee: 'Spare Parts Supplier',
+          amount: pr.purchaseOrder?.totalAmount || totalEst || 0,
+          department: pr.department || 'store',
+          description: `Spare parts purchase for PR ${pr.requestNumber} (${lineCount} items)`,
+          vehicleId: null,
+          paymentMethod: 'bank_transfer',
+        });
+      });
+
+    } else if (type === 'salary') {
+      // 1. Recent Payroll Records
+      const payrolls = await prisma.payroll.findMany({
+        take: 30,
+        orderBy: [{ year: 'desc' }, { month: 'desc' }],
+        include: { employee: true },
+      });
+      payrolls.forEach(p => {
+        const empName = p.employee ? `${p.employee.firstName} ${p.employee.lastName}`.trim() : 'Employee';
+        const refId = `PAYROLL-${p.year}-${String(p.month).padStart(2, '0')}-${p.employee?.empNumber || 'EMP'}`;
+        results.push({
+          id: `payroll-${p.id}`,
+          title: `Payroll ${p.month}/${p.year}: ${empName} (${p.employee?.empNumber || '-'})`,
+          subtitle: `Dept: ${p.employee?.department || '-'} · Net Salary: ETB ${(p.netSalary || p.totalEarnings || 0).toLocaleString()} · Status: ${p.status}`,
+          badge: `Payroll ${p.month}/${p.year}`,
+          referenceType: 'payroll',
+          referenceId: refId,
+          payee: empName,
+          amount: p.netSalary || p.totalEarnings || p.basicSalary || 0,
+          department: p.employee?.department || 'hr',
+          description: `Salary payment for ${empName} (${p.employee?.role || 'Staff'}) for Month ${p.month}/${p.year}`,
+          vehicleId: null,
+          payeeBank: p.employee?.bankAccount ? 'CBE' : null,
+          payeeAccountHolder: empName,
+          payeeAccountNumber: p.employee?.bankAccount || null,
+          paymentMethod: p.employee?.bankAccount ? 'bank_transfer' : 'cash',
+        });
+      });
+
+      // 2. Active Employees
+      const employees = await prisma.employee.findMany({
+        where: { status: 'active' },
+        take: 40,
+        orderBy: { firstName: 'asc' },
+      });
+      employees.forEach(e => {
+        const empName = `${e.firstName} ${e.lastName}`.trim();
+        results.push({
+          id: `emp-salary-${e.id}`,
+          title: `Employee: ${empName} (${e.empNumber})`,
+          subtitle: `Role: ${e.role} · Dept: ${e.department} · Basic Salary: ETB ${e.basicSalary?.toLocaleString() || 0} · Bank: ${e.bankAccount || 'None'}`,
+          badge: `${e.role} (${e.department})`,
+          referenceType: 'payroll',
+          referenceId: `SALARY-${e.empNumber}`,
+          payee: empName,
+          amount: e.basicSalary || 0,
+          department: e.department || 'hr',
+          description: `Salary payout for ${empName} (${e.empNumber} - ${e.role})`,
+          vehicleId: null,
+          payeeBank: e.bankAccount ? 'CBE' : null,
+          payeeAccountHolder: empName,
+          payeeAccountNumber: e.bankAccount || null,
+          paymentMethod: e.bankAccount ? 'bank_transfer' : 'cash',
+        });
+      });
+
+    } else if (type === 'rental') {
+      // 1. Rental Trips
+      const rentalTrips = await prisma.rentalTrip.findMany({
+        take: 25,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          rentalVehicle: { include: { owner: true } },
+        },
+      });
+      rentalTrips.forEach(rt => {
+        const owner = rt.rentalVehicle?.owner;
+        const ownerName = owner?.name || 'Rental Owner';
+        const plate = rt.rentalVehicle?.plateNumber || 'Rental Truck';
+        results.push({
+          id: `rtrip-${rt.id}`,
+          title: `Rental Trip: ${plate} · ${rt.pickupLocation} → ${rt.deliveryLocation}`,
+          subtitle: `Owner: ${ownerName} · Payable: ETB ${rt.rentalPayable?.toLocaleString() || 0} · Qty: ${rt.quantityTons} Tons`,
+          badge: 'Rental Trip',
+          referenceType: 'trip',
+          referenceId: `RTRP-${rt.id.slice(0, 8).toUpperCase()}`,
+          payee: ownerName,
+          amount: rt.rentalPayable || 0,
+          department: 'fleet',
+          description: `Rental payment for trip ${rt.pickupLocation} to ${rt.deliveryLocation} (${plate}, Owner: ${ownerName})`,
+          vehicleId: null,
+          payeeBank: owner?.bankName || null,
+          payeeAccountHolder: owner?.bankAccountHolder || ownerName,
+          payeeAccountNumber: owner?.bankAccountNumber || owner?.bankAccount || null,
+          paymentMethod: owner?.paymentMethod || (owner?.bankAccount ? 'bank_transfer' : 'cash'),
+        });
+      });
+
+      // 2. Rental Owners
+      const rentalOwners = await prisma.rentalOwner.findMany({
+        take: 30,
+        include: { vehicles: true },
+      });
+      rentalOwners.forEach(ro => {
+        const plates = ro.vehicles?.map(v => v.plateNumber).join(', ') || 'No vehicles';
+        results.push({
+          id: `rowner-${ro.id}`,
+          title: `Rental Owner: ${ro.name}`,
+          subtitle: `Vehicles: ${plates} · Phone: ${ro.phone || '-'} · Balance: ETB ${ro.currentBalance?.toLocaleString() || 0}`,
+          badge: 'Rental Owner',
+          referenceType: 'trip',
+          referenceId: `ROWNER-${ro.id.slice(0, 6).toUpperCase()}`,
+          payee: ro.name,
+          amount: ro.currentBalance > 0 ? ro.currentBalance : 15000,
+          department: 'fleet',
+          description: `Rental payout to owner ${ro.name} for vehicle services`,
+          vehicleId: null,
+          payeeBank: ro.bankName || null,
+          payeeAccountHolder: ro.bankAccountHolder || ro.name,
+          payeeAccountNumber: ro.bankAccountNumber || ro.bankAccount || null,
+          paymentMethod: ro.paymentMethod || 'bank_transfer',
+        });
+      });
+
+    } else if (type === 'po_payment') {
+      // Purchase Orders
+      const pos = await prisma.purchaseOrder.findMany({
+        take: 35,
+        orderBy: { createdAt: 'desc' },
+        include: { supplier: true, purchaseRequest: true },
+      });
+      pos.forEach(po => {
+        const suppName = po.supplier?.name || 'Supplier';
+        results.push({
+          id: `po-${po.id}`,
+          title: `PO ${po.poNumber}: ${suppName}`,
+          subtitle: `Total: ETB ${po.totalAmount?.toLocaleString() || 0} · Status: ${po.status} · Mode: ${po.paymentMode}`,
+          badge: `PO (${po.status})`,
+          referenceType: 'po',
+          referenceId: po.poNumber,
+          payee: suppName,
+          amount: po.totalAmount || 0,
+          department: po.purchaseRequest?.department || 'store',
+          description: `Payment for Purchase Order ${po.poNumber} (${suppName})`,
+          vehicleId: null,
+          payeeBank: null,
+          payeeAccountHolder: suppName,
+          payeeAccountNumber: null,
+          paymentMethod: po.paymentMode === 'bank_transfer' ? 'bank_transfer' : (po.paymentMode === 'cash' ? 'cash' : 'bank_transfer'),
+        });
+      });
+
+    } else if (type === 'settlement') {
+      // 1. Customer Settlements
+      const settlements = await prisma.settlement.findMany({
+        take: 30,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          order: { include: { customer: true } },
+        },
+      });
+      settlements.forEach(s => {
+        const custName = s.order?.customer?.companyName || s.order?.customer?.contactName || 'Customer';
+        const net = s.netAmount || s.finalCollectibleAmount || 0;
+        results.push({
+          id: `stl-${s.id}`,
+          title: `Settlement ${s.settlementNumber}: ${custName}`,
+          subtitle: `Net: ETB ${net.toLocaleString()} · Gross: ETB ${(s.grossAmount || 0).toLocaleString()} · Status: ${s.status}`,
+          badge: `Settlement (${s.status})`,
+          referenceType: 'settlement',
+          referenceId: s.settlementNumber,
+          payee: custName,
+          amount: net,
+          department: 'admin',
+          description: `Settlement payout/adjustment for ${s.settlementNumber} (${custName})`,
+          vehicleId: null,
+          payeeAccountHolder: custName,
+          paymentMethod: 'bank_transfer',
+        });
+      });
+
+      // 2. Revenue Share Settlements
+      try {
+        const rsSettlements = await (prisma as any).revenueShareSettlement.findMany({
+          take: 20,
+          orderBy: { createdAt: 'desc' },
+          include: { contract: true },
+        });
+        rsSettlements.forEach((rs: any) => {
+          const plate = rs.contract?.powerVehiclePlate || '';
+          results.push({
+            id: `rs-stl-${rs.id}`,
+            title: `RevShare STL ${rs.settlementNumber} (${rs.month}/${rs.year})`,
+            subtitle: `Plate: ${plate} · Owner Payable: ETB ${(rs.ownerPayable || 0).toLocaleString()} · Status: ${rs.status}`,
+            badge: `RevShare (${rs.status})`,
+            referenceType: 'settlement',
+            referenceId: rs.settlementNumber,
+            payee: `Power Unit Owner (${plate})`,
+            amount: rs.ownerPayable || 0,
+            department: 'admin',
+            description: `Revenue sharing settlement payout for ${rs.settlementNumber} (Period: ${rs.month}/${rs.year})`,
+            vehicleId: null,
+            paymentMethod: 'bank_transfer',
+          });
+        });
+      } catch {}
+
+    } else {
+      // 'other' or default: fetch cross-module candidate records
+      const [trips, wos, pos, emps] = await Promise.all([
+        prisma.trip.findMany({ take: 10, orderBy: { createdAt: 'desc' }, include: { driver: true, vehicle: true } }),
+        prisma.workOrder.findMany({ take: 10, orderBy: { createdAt: 'desc' }, include: { vehicle: true, garage: true } }),
+        prisma.purchaseOrder.findMany({ take: 10, orderBy: { createdAt: 'desc' }, include: { supplier: true } }),
+        prisma.employee.findMany({ where: { status: 'active' }, take: 10 }),
+      ]);
+
+      trips.forEach(t => {
+        const driver = t.driver ? `${t.driver.firstName} ${t.driver.lastName}`.trim() : 'Driver';
+        results.push({
+          id: `gen-trip-${t.id}`,
+          title: `Trip ${t.tripNumber} (${t.vehicle?.plateNumber || '-'})`,
+          subtitle: `${t.pickupLocation} → ${t.deliveryLocation} · Driver: ${driver}`,
+          badge: 'Trip',
+          referenceType: 'trip',
+          referenceId: t.tripNumber,
+          payee: driver,
+          amount: 3000,
+          department: 'fleet',
+          description: `Payment for Trip ${t.tripNumber}`,
+          vehicleId: t.vehicleId || null,
+        });
+      });
+
+      wos.forEach(w => {
+        const garageName = w.garage?.name || 'Workshop';
+        results.push({
+          id: `gen-wo-${w.id}`,
+          title: `WO ${w.workOrderNumber} (${w.vehicle?.plateNumber || '-'})`,
+          subtitle: `${garageName} · ${w.description}`,
+          badge: 'Work Order',
+          referenceType: 'work_order',
+          referenceId: w.workOrderNumber,
+          payee: garageName,
+          amount: w.totalCost || 4000,
+          department: 'workshop',
+          description: `Work order repair: ${w.workOrderNumber}`,
+          vehicleId: w.vehicleId || null,
+        });
+      });
+
+      pos.forEach(p => {
+        results.push({
+          id: `gen-po-${p.id}`,
+          title: `PO ${p.poNumber} (${p.supplier?.name || 'Supplier'})`,
+          subtitle: `Total: ETB ${p.totalAmount?.toLocaleString() || 0}`,
+          badge: 'PO',
+          referenceType: 'po',
+          referenceId: p.poNumber,
+          payee: p.supplier?.name || '',
+          amount: p.totalAmount || 0,
+          department: 'store',
+          description: `Purchase order payment: ${p.poNumber}`,
+        });
+      });
+
+      emps.forEach(e => {
+        const name = `${e.firstName} ${e.lastName}`.trim();
+        results.push({
+          id: `gen-emp-${e.id}`,
+          title: `Employee: ${name} (${e.empNumber})`,
+          subtitle: `Dept: ${e.department} · Role: ${e.role}`,
+          badge: 'Staff',
+          referenceType: 'payroll',
+          referenceId: `EMP-${e.empNumber}`,
+          payee: name,
+          amount: e.basicSalary || 0,
+          department: e.department || 'office',
+          description: `Payment for employee ${name}`,
+          payeeAccountNumber: e.bankAccount || null,
+        });
+      });
+    }
+
+    // Apply search filter if query is provided
+    if (q) {
+      results = results.filter(item =>
+        (item.title && item.title.toLowerCase().includes(q)) ||
+        (item.subtitle && item.subtitle.toLowerCase().includes(q)) ||
+        (item.payee && item.payee.toLowerCase().includes(q)) ||
+        (item.referenceId && item.referenceId.toLowerCase().includes(q)) ||
+        (item.badge && item.badge.toLowerCase().includes(q))
+      );
+    }
+
+    return res.json({ items: results });
+  } catch (e: any) {
+    console.error('Error fetching source data for payment request:', e);
+    return res.status(500).json({ error: e.message });
+  }
+});
+
 // GET / - List payment requests with filters
 router.get('/', async (req: AuthRequest, res: Response) => {
   try {
