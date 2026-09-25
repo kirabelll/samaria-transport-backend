@@ -775,31 +775,75 @@ router.put('/:id/reject', async (req: AuthRequest, res: Response) => {
 router.put('/:id/pay', async (req: AuthRequest, res: Response) => {
   try {
     const { cashierId } = req.body;
-    if (!cashierId) return res.status(400).json({ error: 'cashierId required' });
 
     const existing = await prisma.paymentRequest.findUnique({ where: { id: req.params.id } });
     if (!existing) return res.status(404).json({ error: 'Payment request not found' });
     if (existing.status !== 'approved') return res.status(400).json({ error: 'Only approved requests can be paid' });
 
-    const cashier = await prisma.cashier.findUnique({ where: { id: cashierId } }) as any;
-    if (!cashier) return res.status(404).json({ error: 'Cashier not found' });
-    if (cashier.currentBalance < existing.amount) {
-      return res.status(400).json({ error: 'Insufficient cashier balance' });
+    let targetCashier: any = null;
+
+    if (cashierId && String(cashierId).trim()) {
+      const trimmedId = String(cashierId).trim();
+      targetCashier = await prisma.cashier.findFirst({
+        where: {
+          OR: [
+            { id: trimmedId },
+            { userId: trimmedId },
+            { code: trimmedId },
+          ],
+        }
+      });
+      if (!targetCashier) {
+        // also check by case-insensitive name
+        targetCashier = await prisma.cashier.findFirst({
+          where: { name: { equals: trimmedId, mode: 'insensitive' } }
+        });
+      }
+    } else if (req.user?.id) {
+      // Auto-resolve to user's active cashier record
+      targetCashier = await prisma.cashier.findFirst({
+        where: { userId: req.user.id, isActive: true }
+      });
+      if (!targetCashier) {
+        // fallback to first active cashier
+        targetCashier = await prisma.cashier.findFirst({ where: { isActive: true } });
+      }
     }
 
+    if (!targetCashier) {
+      return res.status(404).json({
+        error: 'Cashier not found. Please specify a valid Cashier ID, User ID, or Code.'
+      });
+    }
+
+    if (targetCashier.currentBalance < existing.amount) {
+      return res.status(400).json({
+        error: `Insufficient cashier balance. Cashier "${targetCashier.name}" has ETB ${targetCashier.currentBalance.toLocaleString()} but request requires ETB ${existing.amount.toLocaleString()}.`
+      });
+    }
+
+    const resolvedCashierId = targetCashier.id;
+
     await prisma.$transaction(async (tx: any) => {
-      await tx.cashTransaction.create({
+      const cashTx = await tx.cashTransaction.create({
         data: {
-          cashierId,
+          cashierId: resolvedCashierId,
           type: 'out',
           category: existing.paymentType,
           amount: existing.amount,
           referenceId: existing.id,
           referenceType: 'payment_request',
-          description: `Payment: ${existing.requestNumber} - ${existing.payee}`,
+          receiverName: existing.payee,
+          paymentMethod: existing.paymentMethod || 'cash',
+          description: `Payment: ${existing.requestNumber || existing.id} - ${existing.payee}`,
+          approvedBy: req.user?.name || req.user?.id,
+          approvedAt: new Date(),
         },
       });
-      await tx.cashier.update({ where: { id: cashierId }, data: { currentBalance: { decrement: existing.amount } } });
+      await tx.cashier.update({
+        where: { id: resolvedCashierId },
+        data: { currentBalance: { decrement: existing.amount } }
+      });
       await tx.paymentRequest.update({
         where: { id: req.params.id },
         data: {
@@ -807,12 +851,15 @@ router.put('/:id/pay', async (req: AuthRequest, res: Response) => {
           paidAmount: existing.amount,
           paidById: req.user?.id,
           paidAt: new Date(),
-          cashTransactionId: null,
+          cashTransactionId: cashTx.id,
         },
       });
     });
 
-    return res.json({ message: 'Payment executed successfully' });
+    return res.json({
+      message: 'Payment executed successfully',
+      cashier: { id: targetCashier.id, name: targetCashier.name, code: targetCashier.code }
+    });
   } catch (e: any) { return res.status(500).json({ error: e.message }); }
 });
 

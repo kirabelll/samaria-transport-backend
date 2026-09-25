@@ -38,10 +38,18 @@ router.post('/setup', async (req: any, res: Response) => {
 
 router.get('/me', authenticate, async (req: AuthRequest, res: Response) => {
   try {
-    const user = await prisma.user.findUnique({ where: { id: req.user!.id }, include: { employee: true, customer: true } });
+    const user = await prisma.user.findUnique({
+      where: { id: req.user!.id },
+      include: {
+        employee: true,
+        customer: true,
+        cashierRecord: { select: { id: true, name: true, code: true, location: true, currentBalance: true, isActive: true } }
+      }
+    });
     if (!user) return res.status(404).json({ error: 'Not found' });
     const { password: _p, ...safe } = user as any;
     safe.permissions = safe.permissions ? JSON.parse(safe.permissions) : null;
+    safe.cashierId = safe.cashierRecord?.id || null;
     return res.json({ user: safe });
   } catch (e: any) { return res.status(500).json({ error: e.message }); }
 });
@@ -53,9 +61,35 @@ router.post('/users', authenticate, async (req: AuthRequest, res: Response) => {
     const exists = await prisma.user.findUnique({ where: { email } });
     if (exists) return res.status(409).json({ error: 'Email exists' });
     const hash = await bcrypt.hash(password, 10);
-    const user = await prisma.user.create({ data: { email, password: hash, name, role,
-      ...(employeeId && { employeeId }), ...(customerId && { customerId }) } });
-    const { password: _p, ...safe } = user;
+    const user = await prisma.user.create({
+      data: {
+        email, password: hash, name, role,
+        ...(employeeId && { employeeId }), ...(customerId && { customerId })
+      }
+    });
+
+    let cashierRecord: any = null;
+    if (role === 'cashier') {
+      const code = `CSH-${user.id.slice(0, 4).toUpperCase()}`;
+      try {
+        cashierRecord = await prisma.cashier.create({
+          data: {
+            userId: user.id,
+            name: user.name,
+            code,
+            floatAmount: 0,
+            currentBalance: 0,
+            isActive: true,
+          }
+        });
+      } catch (err) {
+        console.warn('Could not auto-create cashier record:', err);
+      }
+    }
+
+    const { password: _p, ...safe } = user as any;
+    safe.cashierRecord = cashierRecord;
+    safe.cashierId = cashierRecord?.id || null;
     return res.status(201).json({ user: safe });
   } catch (e: any) { return res.status(500).json({ error: e.message }); }
 });
@@ -77,8 +111,27 @@ router.put('/change-password', authenticate, async (req: AuthRequest, res: Respo
 
 router.get('/users', authenticate, async (req: AuthRequest, res: Response) => {
   try {
-    const raw = await prisma.user.findMany({ select: { id: true, email: true, name: true, role: true, isActive: true, permissions: true, createdAt: true } });
-    const users = raw.map((u: any) => ({ ...u, permissions: u.permissions ? JSON.parse(u.permissions) : null }));
+    const raw = await prisma.user.findMany({
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        role: true,
+        isActive: true,
+        permissions: true,
+        createdAt: true,
+        employee: { select: { id: true, empNumber: true, firstName: true, lastName: true, role: true } },
+        cashierRecord: { select: { id: true, name: true, code: true, location: true, currentBalance: true, isActive: true } }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+    const users = raw.map((u: any) => ({
+      ...u,
+      permissions: u.permissions ? JSON.parse(u.permissions) : null,
+      cashierId: u.cashierRecord?.id || null,
+      cashierCode: u.cashierRecord?.code || null,
+      cashierBalance: u.cashierRecord?.currentBalance ?? null,
+    }));
     return res.json({ users });
   } catch (e: any) { return res.status(500).json({ error: e.message }); }
 });
@@ -93,9 +146,49 @@ router.put('/users/:id', authenticate, async (req: AuthRequest, res: Response) =
     if (isActive !== undefined) data.isActive = isActive;
     if (newPassword) data.password = await bcrypt.hash(newPassword, 10);
     if (permissions !== undefined) data.permissions = permissions ? JSON.stringify(permissions) : null;
-    const raw = await prisma.user.update({ where: { id }, data,
-      select: { id: true, email: true, name: true, role: true, isActive: true, permissions: true, createdAt: true } });
-    const user = { ...raw, permissions: (raw as any).permissions ? JSON.parse((raw as any).permissions) : null };
+    
+    const raw = await prisma.user.update({
+      where: { id },
+      data,
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        role: true,
+        isActive: true,
+        permissions: true,
+        createdAt: true,
+        employee: { select: { id: true, empNumber: true, firstName: true, lastName: true } },
+        cashierRecord: { select: { id: true, name: true, code: true, location: true, currentBalance: true, isActive: true } }
+      }
+    });
+
+    if (role === 'cashier' && !raw.cashierRecord) {
+      try {
+        const code = `CSH-${raw.id.slice(0, 4).toUpperCase()}`;
+        const newCashier = await prisma.cashier.create({
+          data: {
+            userId: raw.id,
+            name: raw.name,
+            code,
+            floatAmount: 0,
+            currentBalance: 0,
+            isActive: true
+          }
+        });
+        (raw as any).cashierRecord = newCashier;
+      } catch (err) {
+        console.warn('Could not auto-create cashier for existing user:', err);
+      }
+    }
+
+    const user = {
+      ...raw,
+      permissions: (raw as any).permissions ? JSON.parse((raw as any).permissions) : null,
+      cashierId: raw.cashierRecord?.id || null,
+      cashierCode: raw.cashierRecord?.code || null,
+      cashierBalance: raw.cashierRecord?.currentBalance ?? null,
+    };
     return res.json({ user });
   } catch (e: any) { return res.status(500).json({ error: e.message }); }
 });
