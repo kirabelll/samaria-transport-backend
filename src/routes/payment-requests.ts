@@ -794,9 +794,8 @@ router.put('/:id/pay', async (req: AuthRequest, res: Response) => {
         }
       });
       if (!targetCashier) {
-        // also check by case-insensitive name
         targetCashier = await prisma.cashier.findFirst({
-          where: { name: { equals: trimmedId, mode: 'insensitive' } }
+          where: { name: trimmedId }
         });
       }
     } else if (req.user?.id) {
